@@ -492,10 +492,10 @@ export default function App() {
 
       for (const endpoint of directEndpoints) {
         try {
-          const res = await fetch(endpoint, {
-            headers: { 'Accept': 'application/json' },
+          const fetchOptions: RequestInit = {
             signal: abortControllerRef.current.signal
-          });
+          };
+          const res = await fetch(endpoint, fetchOptions);
           if (res.ok) {
             let parsed = await res.json();
 
