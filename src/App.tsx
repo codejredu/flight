@@ -1,4 +1,4 @@
- /**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -421,8 +421,8 @@ export default function App() {
   const [zoom, setZoom] = useState(8);
   const [distanceKm, setDistanceKm] = useState(150);
 
-  // Flight data state
-  const [aircrafts, setAircrafts] = useState<Aircraft[]>([]);
+  // Flight data state (initialized with regional aircrafts to guarantee map is never empty)
+  const [aircrafts, setAircrafts] = useState<Aircraft[]>(() => getMockAircrafts(PRESET_LOCATIONS[0].lat, PRESET_LOCATIONS[0].lon));
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -563,21 +563,48 @@ export default function App() {
         });
       } else {
         // Fallback to regional simulated air traffic if no live receiver in range
-        setAircrafts(getMockAircrafts(center.lat, center.lng));
+        setAircrafts(prev => prev.length > 0 ? prev : getMockAircrafts(center.lat, center.lng));
         setIsLiveData(false);
         setError(null);
         setLastUpdated(new Date());
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
+      if (err.name === 'AbortError') {
+        setAircrafts(prev => prev.length > 0 ? prev : getMockAircrafts(center.lat, center.lng));
+        return;
+      }
       console.error("Error fetching flight data:", err);
-      setAircrafts(getMockAircrafts(center.lat, center.lng));
+      setAircrafts(prev => prev.length > 0 ? prev : getMockAircrafts(center.lat, center.lng));
       setIsLiveData(false);
       setError(null);
     } finally {
       setLoading(false);
     }
   }, [center.lat, center.lng, distanceKm, soundEnabled, audioAlertsTriggered, aircrafts.length]);
+
+  // Real-time kinematic flight movement loop (1 second updates for smooth flying aircrafts)
+  useEffect(() => {
+    const moveTimer = setInterval(() => {
+      setAircrafts(prev => {
+        if (!prev || prev.length === 0) return getMockAircrafts(center.lat, center.lng);
+        return prev.map(ac => {
+          if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return ac;
+          const speed = ac.gs || 250;
+          const headingRad = ((ac.track || 0) * Math.PI) / 180;
+          const distDegrees = (speed / 3600) * 0.003;
+          const newLat = ac.lat + Math.cos(headingRad) * distDegrees;
+          const newLon = ac.lon + Math.sin(headingRad) * distDegrees;
+          return {
+            ...ac,
+            lat: newLat,
+            lon: newLon
+          };
+        });
+      });
+    }, 1000);
+
+    return () => clearInterval(moveTimer);
+  }, [center.lat, center.lng]);
 
   // Initial and interval fetch
   useEffect(() => {
