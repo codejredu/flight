@@ -467,20 +467,23 @@ export default function App() {
       
       let liveAircrafts: Aircraft[] = [];
       const isGitHubPages = window.location.hostname.includes('github.io');
-      const pointPath = `v2/point/${center.lat}/${center.lng}/${distanceKm}`;
-      const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
-      const delta = distanceKm > 200 ? 2.5 : 1.5;
+      const effectiveDist = Math.max(distanceKm, 200);
+      const pointPath = `v2/point/${center.lat}/${center.lng}/${effectiveDist}`;
+      const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`;
+      const delta = 2.5;
 
-      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + 2).toFixed(2)},${(center.lat - 2).toFixed(2)},${(center.lng - 2).toFixed(2)},${(center.lng + 2).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
+      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + delta).toFixed(2)},${(center.lat - delta).toFixed(2)},${(center.lng - delta).toFixed(2)},${(center.lng + delta).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
       const directEndpoints = [
-        ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`] : []),
+        ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`] : []),
         `https://api.airplanes.live/${pointPath}`,
         `https://api.adsb.lol/${latLonPath}`,
         `https://api.adsb.one/${pointPath}`,
-        `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`,
+        `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`,
+        `https://api.allorigins.win/get?url=${encodeURIComponent(fr24RawUrl)}`,
+        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`,
         `https://opensky-network.org/api/states/all?lamin=${(center.lat - delta).toFixed(2)}&lomin=${(center.lng - delta).toFixed(2)}&lamax=${(center.lat + delta).toFixed(2)}&lomax=${(center.lng + delta).toFixed(2)}`
       ];
 
@@ -491,7 +494,14 @@ export default function App() {
             signal: abortControllerRef.current.signal
           });
           if (res.ok) {
-            const parsed = await res.json();
+            let parsed = await res.json();
+
+            // Unwrap proxy response wrappers if returned by allorigins or codetabs
+            if (parsed && typeof parsed.contents === 'string') {
+              try {
+                parsed = JSON.parse(parsed.contents);
+              } catch (e) {}
+            }
             
             if (endpoint.startsWith('/api/flights')) {
               if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
@@ -502,7 +512,7 @@ export default function App() {
                 liveAircrafts = parsed.ac;
                 break;
               }
-            } else if (endpoint.includes('flightradar24') || endpoint.includes('corsproxy') || endpoint.includes('allorigins') || (parsed && parsed.full_count !== undefined)) {
+            } else if (endpoint.includes('flightradar24') || endpoint.includes('corsproxy') || endpoint.includes('allorigins') || endpoint.includes('codetabs') || (parsed && parsed.full_count !== undefined)) {
               const fr24Ac = parseFlightRadar24Data(parsed);
               if (fr24Ac.length > 0) {
                 liveAircrafts = fr24Ac;
