@@ -224,6 +224,35 @@ const createAircraftDivIcon = (ac: any, isSelected: boolean, showLabels: boolean
   });
 };
 
+const parseOpenSkyData = (states: any[]): Aircraft[] => {
+  if (!Array.isArray(states)) return [];
+  return states
+    .map(s => {
+      const hex = String(s[0] || '').toLowerCase();
+      const flight = String(s[1] || '').trim();
+      const lon = s[5];
+      const lat = s[6];
+      const altMeters = s[7];
+      const alt_baro: number | 'ground' | undefined = s[8] ? 'ground' : (typeof altMeters === 'number' ? Math.round(altMeters * 3.28084) : undefined);
+      const speedMs = s[9];
+      const gs = typeof speedMs === 'number' ? Math.round(speedMs * 1.94384) : undefined;
+      const track = typeof s[10] === 'number' ? Math.round(s[10]) : 0;
+      const squawk = s[14] ? String(s[14]) : undefined;
+
+      return {
+        hex,
+        flight,
+        lat,
+        lon,
+        alt_baro,
+        gs,
+        track,
+        squawk
+      };
+    })
+    .filter(ac => typeof ac.lat === 'number' && typeof ac.lon === 'number');
+};
+
 const LeafletViewController = ({ center, zoom }: { center: { lat: number; lng: number }; zoom: number }) => {
   const map = useMap();
   useEffect(() => {
@@ -390,29 +419,71 @@ export default function App() {
     try {
       setLoading(prev => aircrafts.length === 0 ? true : prev);
       
-      let data: any = null;
+      let liveAircrafts: Aircraft[] = [];
+      const targetPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
+
+      // 1. Try local Express proxy
       try {
-        // Try Express server proxy endpoint
-        const proxyUrl = `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`;
-        const res = await fetch(proxyUrl, { signal: abortControllerRef.current.signal });
+        const res = await fetch(`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`, { signal: abortControllerRef.current.signal });
         if (res.ok) {
-          data = await res.json();
+          const parsed = await res.json();
+          if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+            liveAircrafts = parsed.ac;
+          }
         }
-      } catch {
-        // Express proxy unavailable (e.g. static GitHub Pages hosting)
+      } catch (e: any) {
+        if (e.name === 'AbortError') throw e;
       }
 
-      // If proxy unavailable or failed, fetch directly from ADSB.lol open API
-      if (!data) {
-        const directUrl = `https://api.adsb.lol/v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
-        const res = await fetch(directUrl, { signal: abortControllerRef.current.signal });
-        if (res.ok) {
-          data = await res.json();
+      // 2. Try direct ADSB.lol API
+      if (liveAircrafts.length === 0) {
+        try {
+          const res = await fetch(`https://api.adsb.lol/${targetPath}`, { signal: abortControllerRef.current.signal });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+              liveAircrafts = parsed.ac;
+            }
+          }
+        } catch (e: any) {
+          if (e.name === 'AbortError') throw e;
+        }
+      }
+
+      // 3. Try OpenSky Network Global API
+      if (liveAircrafts.length === 0) {
+        try {
+          const delta = distanceKm > 200 ? 2.5 : 1.5;
+          const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${center.lat - delta}&lomin=${center.lng - delta}&lamax=${center.lat + delta}&lomax=${center.lng + delta}`;
+          const res = await fetch(openSkyUrl, { signal: abortControllerRef.current.signal });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (parsed && Array.isArray(parsed.states) && parsed.states.length > 0) {
+              liveAircrafts = parseOpenSkyData(parsed.states);
+            }
+          }
+        } catch (e: any) {
+          if (e.name === 'AbortError') throw e;
+        }
+      }
+
+      // 4. Try CORS Proxy to ADSB.lol
+      if (liveAircrafts.length === 0) {
+        try {
+          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://api.adsb.lol/${targetPath}`)}`, { signal: abortControllerRef.current.signal });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+              liveAircrafts = parsed.ac;
+            }
+          }
+        } catch (e: any) {
+          if (e.name === 'AbortError') throw e;
         }
       }
       
-      if (data && Array.isArray(data.ac) && data.ac.length > 0) {
-        const validAc = data.ac.filter((ac: Aircraft) => typeof ac.lat === 'number' && typeof ac.lon === 'number');
+      if (liveAircrafts.length > 0) {
+        const validAc = liveAircrafts.filter((ac: Aircraft) => typeof ac.lat === 'number' && typeof ac.lon === 'number');
         setAircrafts(validAc);
         setError(null);
         setLastUpdated(new Date());
