@@ -382,6 +382,7 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isLiveData, setIsLiveData] = useState<boolean>(false);
 
   // UI & Controls state
   const [searchQuery, setSearchQuery] = useState('');
@@ -420,29 +421,27 @@ export default function App() {
       setLoading(prev => aircrafts.length === 0 ? true : prev);
       
       let liveAircrafts: Aircraft[] = [];
-      const targetPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
+      const pointPath = `v2/point/${center.lat}/${center.lng}/${distanceKm}`;
+      const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
 
-      // 1. Try local Express proxy
-      try {
-        const res = await fetch(`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`, { signal: abortControllerRef.current.signal });
-        if (res.ok) {
-          const parsed = await res.json();
-          if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-            liveAircrafts = parsed.ac;
-          }
-        }
-      } catch (e: any) {
-        if (e.name === 'AbortError') throw e;
-      }
+      const candidateUrls = [
+        `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`,
+        `https://api.airplanes.live/${pointPath}`,
+        `https://api.adsb.one/${pointPath}`,
+        `https://api.adsb.lol/${latLonPath}`,
+        `https://corsproxy.io/?${encodeURIComponent(`https://api.airplanes.live/${pointPath}`)}`,
+        `https://corsproxy.io/?${encodeURIComponent(`https://api.adsb.one/${pointPath}`)}`,
+        `https://corsproxy.io/?${encodeURIComponent(`https://api.adsb.lol/${latLonPath}`)}`
+      ];
 
-      // 2. Try direct ADSB.lol API
-      if (liveAircrafts.length === 0) {
+      for (const url of candidateUrls) {
         try {
-          const res = await fetch(`https://api.adsb.lol/${targetPath}`, { signal: abortControllerRef.current.signal });
+          const res = await fetch(url, { signal: abortControllerRef.current.signal });
           if (res.ok) {
             const parsed = await res.json();
             if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
               liveAircrafts = parsed.ac;
+              break; // Got real live flight data!
             }
           }
         } catch (e: any) {
@@ -450,7 +449,7 @@ export default function App() {
         }
       }
 
-      // 3. Try OpenSky Network Global API
+      // Try OpenSky if Readsb feeder networks returned empty
       if (liveAircrafts.length === 0) {
         try {
           const delta = distanceKm > 200 ? 2.5 : 1.5;
@@ -466,25 +465,11 @@ export default function App() {
           if (e.name === 'AbortError') throw e;
         }
       }
-
-      // 4. Try CORS Proxy to ADSB.lol
-      if (liveAircrafts.length === 0) {
-        try {
-          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://api.adsb.lol/${targetPath}`)}`, { signal: abortControllerRef.current.signal });
-          if (res.ok) {
-            const parsed = await res.json();
-            if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-              liveAircrafts = parsed.ac;
-            }
-          }
-        } catch (e: any) {
-          if (e.name === 'AbortError') throw e;
-        }
-      }
       
       if (liveAircrafts.length > 0) {
         const validAc = liveAircrafts.filter((ac: Aircraft) => typeof ac.lat === 'number' && typeof ac.lon === 'number');
         setAircrafts(validAc);
+        setIsLiveData(true);
         setError(null);
         setLastUpdated(new Date());
 
@@ -498,8 +483,9 @@ export default function App() {
           }
         });
       } else {
-        // If direct API is empty or rate limited, generate realistic regional simulated air traffic
+        // Fallback to regional simulated air traffic if no live receiver in range
         setAircrafts(getMockAircrafts(center.lat, center.lng));
+        setIsLiveData(false);
         setError(null);
         setLastUpdated(new Date());
       }
@@ -676,10 +662,12 @@ export default function App() {
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isLiveData ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isLiveData ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
               </span>
-              <span className="text-xs text-emerald-400 font-medium">שרת פעיל • {aircrafts.length} טיסות</span>
+              <span className={`text-xs font-medium ${isLiveData ? 'text-emerald-400' : 'text-amber-300'}`}>
+                {isLiveData ? `מכ"ם חי ADS-B • ${aircrafts.length} טיסות` : `מכ"ם הדגמה / סימולציה • ${aircrafts.length} טיסות`}
+              </span>
             </div>
           </div>
         </div>
