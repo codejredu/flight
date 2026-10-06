@@ -1,4 +1,4 @@
-/**
+ /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -470,78 +470,76 @@ export default function App() {
       const effectiveDist = Math.max(distanceKm, 200);
       const pointPath = `v2/point/${center.lat}/${center.lng}/${effectiveDist}`;
       const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`;
-      const delta = 2.5;
 
-      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + delta).toFixed(2)},${(center.lat - delta).toFixed(2)},${(center.lng - delta).toFixed(2)},${(center.lng + delta).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
+      // Bounding box size: ±2.5° (~25 square degrees = 1 OpenSky credit)
+      const box = 2.5;
+      const osQuery = `lamin=${(center.lat - box).toFixed(2)}&lomin=${(center.lng - box).toFixed(2)}&lamax=${(center.lat + box).toFixed(2)}&lomax=${(center.lng + box).toFixed(2)}`;
+      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + box).toFixed(2)},${(center.lat - box).toFixed(2)},${(center.lng - box).toFixed(2)},${(center.lng + box).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
-      const openSkyRawUrl = `https://opensky-network.org/api/states/all?lamin=${(center.lat - 3.5).toFixed(2)}&lomin=${(center.lng - 3.5).toFixed(2)}&lamax=${(center.lat + 3.5).toFixed(2)}&lomax=${(center.lng + 3.5).toFixed(2)}`;
+      type SourceKind = 'opensky' | 'fr24' | 'readsb' | 'local';
+      interface Source { url: string; kind: SourceKind }
 
-      const directEndpoints = [
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(openSkyRawUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(openSkyRawUrl)}`,
-        openSkyRawUrl,
-        ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`] : []),
-        `https://api.airplanes.live/${pointPath}`,
-        `https://api.adsb.lol/${latLonPath}`,
-        `https://api.adsb.one/${pointPath}`,
-        `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`
+      const sources: Source[] = [
+        ...(!isGitHubPages ? [{ url: `/api/opensky?${osQuery}`, kind: 'opensky' as const }] : []),
+        ...(!isGitHubPages ? [{ url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const }] : []),
+        { url: `https://opensky-network.org/api/states/all?${osQuery}`, kind: 'opensky' },
+        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb' },
+        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb' },
+        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb' },
+        { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' },
+        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' },
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' }
       ];
 
-      for (const endpoint of directEndpoints) {
+      for (const { url, kind } of sources) {
         try {
-          const fetchOptions: RequestInit = {
-            signal: abortControllerRef.current.signal
-          };
-          const res = await fetch(endpoint, fetchOptions);
-          if (res.ok) {
-            let parsed = await res.json();
+          // Timeout signal to prevent hanging proxies from blocking the loop
+          const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
+          const signal = timeoutSignal && AbortSignal.any 
+            ? AbortSignal.any([abortControllerRef.current.signal, timeoutSignal])
+            : abortControllerRef.current.signal;
 
-            if (typeof parsed === 'string') {
-              try {
-                parsed = JSON.parse(parsed);
-              } catch (e) {}
-            }
+          const res = await fetch(url, { signal });
+          if (!res.ok) {
+            console.warn(`[${kind}] ${res.status} ${res.statusText} ← ${url}`);
+            continue;
+          }
+          let parsed = await res.json();
 
-            // Unwrap proxy response wrappers if returned by allorigins or codetabs
-            if (parsed && typeof parsed.contents === 'string') {
-              try {
-                parsed = JSON.parse(parsed.contents);
-              } catch (e) {}
-            }
-            
-            if (endpoint.startsWith('/api/flights')) {
-              if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-                if (parsed.source === 'live_simulation_fallback' || parsed.source === 'regional_simulation') {
-                  liveAircrafts = parsed.ac;
-                  continue;
-                }
+          if (typeof parsed === 'string') {
+            try { parsed = JSON.parse(parsed); } catch (e) {}
+          }
+          if (parsed && typeof parsed.contents === 'string') {
+            try { parsed = JSON.parse(parsed.contents); } catch (e) {}
+          }
+
+          let list: Aircraft[] = [];
+          if (kind === 'opensky') {
+            list = parseOpenSkyData(parsed?.states ?? []);
+          } else if (kind === 'fr24') {
+            list = parseFlightRadar24Data(parsed);
+          } else if (kind === 'local') {
+            if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+              if (parsed.source === 'live_simulation_fallback' || parsed.source === 'regional_simulation') {
                 liveAircrafts = parsed.ac;
-                break;
+                continue;
               }
-            } else if (endpoint.includes('flightradar24') || endpoint.includes('corsproxy') || endpoint.includes('allorigins') || endpoint.includes('codetabs') || (parsed && parsed.full_count !== undefined)) {
-              const fr24Ac = parseFlightRadar24Data(parsed);
-              if (fr24Ac.length > 0) {
-                liveAircrafts = fr24Ac;
-                break;
-              }
-            } else if (endpoint.includes('opensky-network') || (parsed && Array.isArray(parsed.states))) {
-              if (parsed && Array.isArray(parsed.states) && parsed.states.length > 0) {
-                const openSkyAc = parseOpenSkyData(parsed.states);
-                if (openSkyAc.length > 0) {
-                  liveAircrafts = openSkyAc;
-                  break;
-                }
-              }
-            } else if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-              liveAircrafts = parsed.ac;
-              break;
+              list = parsed.ac;
             }
+          } else {
+            list = Array.isArray(parsed?.ac) ? parsed.ac : [];
+          }
+
+          if (list.length > 0) {
+            console.info(`[${kind}] ✓ ${list.length} aircrafts loaded successfully from ${url}`);
+            liveAircrafts = list;
+            break;
           }
         } catch (e: any) {
-          if (e.name === 'AbortError') throw e;
+          if (e.name === 'AbortError' && abortControllerRef.current.signal.aborted) {
+            throw e; // Explicit user/component navigation abort
+          }
+          console.warn(`[${kind}] Fetch failed on ${url}:`, e.message);
         }
       }
       
