@@ -41,28 +41,75 @@ async function startServer() {
     });
   }
 
-  // API Proxy endpoint for OpenSky flights
-  app.get('/api/opensky', async (req, res) => {
-    const lamin = req.query.lamin || '29.50';
-    const lomin = req.query.lomin || '32.30';
-    const lamax = req.query.lamax || '34.50';
-    const lomax = req.query.lomax || '37.30';
-    const targetUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+  // In-memory OpenSky OAuth2 token cache
+  let openSkyTokenCache = { token: null as string | null, exp: 0 };
+
+  async function getOpenSkyToken(): Promise<string | null> {
+    if (openSkyTokenCache.token && Date.now() < openSkyTokenCache.exp) {
+      return openSkyTokenCache.token;
+    }
+    const clientId = process.env.OPENSKY_CLIENT_ID;
+    const clientSecret = process.env.OPENSKY_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
 
     try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
-          'Accept': 'application/json'
+      const r = await fetch(
+        'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: clientId,
+            client_secret: clientSecret,
+          }),
         }
-      });
-      if (!response.ok) {
-        return res.status(response.status).json({ error: 'OpenSky rate limited or error' });
+      );
+      if (!r.ok) return null;
+      const j = await r.json();
+      openSkyTokenCache = {
+        token: j.access_token,
+        exp: Date.now() + Math.max(0, (j.expires_in - 60) * 1000)
+      };
+      return openSkyTokenCache.token;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // API Proxy endpoint for OpenSky flights with optional OAuth2 token authentication
+  app.get('/api/opensky', async (req, res) => {
+    try {
+      const lamin = req.query.lamin || '29.50';
+      const lomin = req.query.lomin || '32.30';
+      const lamax = req.query.lamax || '34.50';
+      const lomax = req.query.lomax || '37.30';
+      const targetUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
+        'Accept': 'application/json'
+      };
+
+      const token = await getOpenSkyToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
       }
+
+      const response = await fetch(targetUrl, { headers });
+      const rateLimit = response.headers.get('x-rate-limit-remaining');
+      if (rateLimit) {
+        res.setHeader('X-Rate-Limit-Remaining', rateLimit);
+      }
+
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `OpenSky status ${response.status}` });
+      }
+
       const data = await response.json();
       res.json(data);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(502).json({ error: error.message });
     }
   });
 
