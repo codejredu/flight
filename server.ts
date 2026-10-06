@@ -1,4 +1,4 @@
-import express from 'express';
+ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
@@ -40,6 +40,31 @@ async function startServer() {
       ac.lon += (Math.random() - 0.5) * 0.01;
     });
   }
+
+  // API Proxy endpoint for OpenSky flights
+  app.get('/api/opensky', async (req, res) => {
+    const lamin = req.query.lamin || '29.50';
+    const lomin = req.query.lomin || '32.30';
+    const lamax = req.query.lamax || '34.50';
+    const lomax = req.query.lomax || '37.30';
+    const targetUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+
+    try {
+      const response = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
+          'Accept': 'application/json'
+        }
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: 'OpenSky rate limited or error' });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // API Proxy endpoint for ADSB.lol flights
   app.get('/api/flights', async (req, res) => {
