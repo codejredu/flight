@@ -224,6 +224,44 @@ const createAircraftDivIcon = (ac: any, isSelected: boolean, showLabels: boolean
   });
 };
 
+const parseFlightRadar24Data = (data: any): Aircraft[] => {
+  if (!data || typeof data !== 'object') return [];
+  const results: Aircraft[] = [];
+
+  for (const key in data) {
+    if (Array.isArray(data[key]) && data[key].length >= 10) {
+      const item = data[key];
+      const hex = key;
+      const lat = item[1];
+      const lon = item[2];
+      const track = typeof item[3] === 'number' ? item[3] : 0;
+      const alt_baro = item[14] ? 'ground' : (typeof item[4] === 'number' ? item[4] : undefined);
+      const gs = typeof item[5] === 'number' ? item[5] : undefined;
+      const squawk = item[6] ? String(item[6]) : undefined;
+      const t = item[8] ? String(item[8]) : undefined;
+      const r = item[9] ? String(item[9]) : undefined;
+      const flight = item[13] || item[16] || r || hex;
+
+      if (typeof lat === 'number' && typeof lon === 'number') {
+        results.push({
+          hex,
+          flight: String(flight).trim(),
+          r,
+          t,
+          lat,
+          lon,
+          track,
+          alt_baro,
+          gs,
+          squawk
+        });
+      }
+    }
+  }
+
+  return results;
+};
+
 const parseOpenSkyData = (states: any[]): Aircraft[] => {
   if (!Array.isArray(states)) return [];
   return states
@@ -253,21 +291,27 @@ const parseOpenSkyData = (states: any[]): Aircraft[] => {
     .filter(ac => typeof ac.lat === 'number' && typeof ac.lon === 'number');
 };
 
-const LeafletViewController = ({ center, zoom }: { center: { lat: number; lng: number }; zoom: number }) => {
+const LeafletViewController = ({ center, zoom, isProgrammaticMoveRef }: { center: { lat: number; lng: number }; zoom: number; isProgrammaticMoveRef: React.MutableRefObject<boolean> }) => {
   const map = useMap();
   useEffect(() => {
-    if (map) {
+    if (map && isProgrammaticMoveRef.current) {
+      isProgrammaticMoveRef.current = false;
       map.flyTo([center.lat, center.lng], zoom, { duration: 1.2 });
     }
-  }, [center.lat, center.lng, zoom, map]);
+  }, [center.lat, center.lng, zoom, map, isProgrammaticMoveRef]);
   return null;
 };
 
-const LeafletEventsHandler = ({ onCenterChange }: { onCenterChange: (center: { lat: number; lng: number }, zoom: number) => void }) => {
+const LeafletEventsHandler = ({ onCenterChange, isProgrammaticMoveRef }: { onCenterChange: (center: { lat: number; lng: number }, zoom: number) => void; isProgrammaticMoveRef: React.MutableRefObject<boolean> }) => {
   const map = useMapEvents({
+    dragstart: () => {
+      isProgrammaticMoveRef.current = false;
+    },
     moveend: () => {
-      const c = map.getCenter();
-      onCenterChange({ lat: c.lat, lng: c.lng }, map.getZoom());
+      if (!isProgrammaticMoveRef.current) {
+        const c = map.getCenter();
+        onCenterChange({ lat: c.lat, lng: c.lng }, map.getZoom());
+      }
     }
   });
   return null;
@@ -398,9 +442,10 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [audioAlertsTriggered, setAudioAlertsTriggered] = useState<Set<string>>(new Set());
 
-  // Refs for debouncing map drag and aborting pending fetches
+  // Refs for debouncing map drag, aborting pending fetches, and tracking programmatic moves
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isProgrammaticMoveRef = useRef<boolean>(true);
 
   // Listen for GMP quota exceeded event
   useEffect(() => {
@@ -427,6 +472,7 @@ export default function App() {
 
       const directEndpoints = [
         `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`,
+        `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${center.lat + 1.8},${center.lat - 1.8},${center.lng - 1.8},${center.lng + 1.8}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`,
         `https://api.airplanes.live/${pointPath}`,
         `https://api.adsb.one/${pointPath}`,
         `https://api.adsb.lol/${latLonPath}`,
@@ -441,7 +487,13 @@ export default function App() {
           });
           if (res.ok) {
             const parsed = await res.json();
-            if (endpoint.includes('opensky-network')) {
+            if (endpoint.includes('flightradar24.com')) {
+              const fr24Ac = parseFlightRadar24Data(parsed);
+              if (fr24Ac.length > 0) {
+                liveAircrafts = fr24Ac;
+                break;
+              }
+            } else if (endpoint.includes('opensky-network')) {
               if (parsed && Array.isArray(parsed.states) && parsed.states.length > 0) {
                 liveAircrafts = parseOpenSkyData(parsed.states);
                 if (liveAircrafts.length > 0) break;
@@ -568,6 +620,7 @@ export default function App() {
   // Handle selecting a preset location
   const handlePresetChange = (preset: typeof PRESET_LOCATIONS[0]) => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    isProgrammaticMoveRef.current = true;
     setSelectedPreset(preset);
     setCenter({ lat: preset.lat, lng: preset.lon });
     setDistanceKm(preset.dist);
@@ -802,6 +855,7 @@ export default function App() {
                           setSelectedFlight(ac);
                           setIsSidebarOpen(true);
                           if (ac.lat && ac.lon) {
+                            isProgrammaticMoveRef.current = true;
                             setCenter({ lat: ac.lat, lng: ac.lon });
                           }
                         }}
@@ -894,14 +948,17 @@ export default function App() {
             className="w-full h-full z-0"
             style={{ background: '#090d16' }}
           >
-            <LeafletViewController center={center} zoom={zoom} />
-            <LeafletEventsHandler onCenterChange={(newCenter, newZoom) => {
-              setZoom(newZoom);
-              if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-              debounceTimerRef.current = setTimeout(() => {
-                setCenter(newCenter);
-              }, 600);
-            }} />
+            <LeafletViewController center={center} zoom={zoom} isProgrammaticMoveRef={isProgrammaticMoveRef} />
+            <LeafletEventsHandler
+              isProgrammaticMoveRef={isProgrammaticMoveRef}
+              onCenterChange={(newCenter, newZoom) => {
+                setZoom(newZoom);
+                if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+                debounceTimerRef.current = setTimeout(() => {
+                  setCenter(newCenter);
+                }, 600);
+              }}
+            />
             <TileLayer
               attribution={
                 mapStyle === 'dark'
