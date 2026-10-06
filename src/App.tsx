@@ -474,7 +474,11 @@ export default function App() {
 
       const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + delta).toFixed(2)},${(center.lat - delta).toFixed(2)},${(center.lng - delta).toFixed(2)},${(center.lng + delta).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
+      const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${(center.lat - 3.5).toFixed(2)}&lomin=${(center.lng - 3.5).toFixed(2)}&lamax=${(center.lat + 3.5).toFixed(2)}&lomax=${(center.lng + 3.5).toFixed(2)}`;
+
       const directEndpoints = [
+        openSkyUrl,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(openSkyUrl)}`,
         ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`] : []),
         `https://api.airplanes.live/${pointPath}`,
         `https://api.adsb.lol/${latLonPath}`,
@@ -483,8 +487,7 @@ export default function App() {
         `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`,
         `https://api.allorigins.win/get?url=${encodeURIComponent(fr24RawUrl)}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`,
-        `https://opensky-network.org/api/states/all?lamin=${(center.lat - delta).toFixed(2)}&lomin=${(center.lng - delta).toFixed(2)}&lamax=${(center.lat + delta).toFixed(2)}&lomax=${(center.lng + delta).toFixed(2)}`
+        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`
       ];
 
       for (const endpoint of directEndpoints) {
