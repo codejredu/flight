@@ -1,4 +1,4 @@
-/**
+ /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -423,100 +423,36 @@ export default function App() {
       let liveAircrafts: Aircraft[] = [];
       const pointPath = `v2/point/${center.lat}/${center.lng}/${distanceKm}`;
       const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
+      const delta = distanceKm > 200 ? 2.5 : 1.5;
 
-      // Candidate 1: Local Express Proxy
-      try {
-        const res = await fetch(`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`, { signal: abortControllerRef.current.signal });
-        if (res.ok) {
-          const parsed = await res.json();
-          if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-            liveAircrafts = parsed.ac;
-          }
-        }
-      } catch (e: any) {
-        if (e.name === 'AbortError') throw e;
-      }
+      const directEndpoints = [
+        `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`,
+        `https://api.airplanes.live/${pointPath}`,
+        `https://api.adsb.one/${pointPath}`,
+        `https://api.adsb.lol/${latLonPath}`,
+        `https://opensky-network.org/api/states/all?lamin=${center.lat - delta}&lomin=${center.lng - delta}&lamax=${center.lat + delta}&lomax=${center.lng + delta}`
+      ];
 
-      // Candidate 2: allorigins.win proxy for ADSB.lol
-      if (liveAircrafts.length === 0) {
+      for (const endpoint of directEndpoints) {
         try {
-          const rawUrl = `https://api.adsb.lol/${latLonPath}`;
-          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rawUrl)}`, { signal: abortControllerRef.current.signal });
+          const res = await fetch(endpoint, {
+            headers: { 'Accept': 'application/json' },
+            signal: abortControllerRef.current.signal
+          });
           if (res.ok) {
-            const wrapper = await res.json();
-            if (wrapper && wrapper.contents) {
-              const parsed = JSON.parse(wrapper.contents);
-              if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-                liveAircrafts = parsed.ac;
-              }
-            }
-          }
-        } catch (e: any) {
-          if (e.name === 'AbortError') throw e;
-        }
-      }
-
-      // Candidate 3: allorigins.win proxy for Airplanes.live
-      if (liveAircrafts.length === 0) {
-        try {
-          const rawUrl = `https://api.airplanes.live/${pointPath}`;
-          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rawUrl)}`, { signal: abortControllerRef.current.signal });
-          if (res.ok) {
-            const wrapper = await res.json();
-            if (wrapper && wrapper.contents) {
-              const parsed = JSON.parse(wrapper.contents);
-              if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-                liveAircrafts = parsed.ac;
-              }
-            }
-          }
-        } catch (e: any) {
-          if (e.name === 'AbortError') throw e;
-        }
-      }
-
-      // Candidate 4: allorigins.win proxy for OpenSky Network
-      if (liveAircrafts.length === 0) {
-        try {
-          const delta = distanceKm > 200 ? 2.5 : 1.5;
-          const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${center.lat - delta}&lomin=${center.lng - delta}&lamax=${center.lat + delta}&lomax=${center.lng + delta}`;
-          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(openSkyUrl)}`, { signal: abortControllerRef.current.signal });
-          if (res.ok) {
-            const wrapper = await res.json();
-            if (wrapper && wrapper.contents) {
-              const parsed = JSON.parse(wrapper.contents);
+            const parsed = await res.json();
+            if (endpoint.includes('opensky-network')) {
               if (parsed && Array.isArray(parsed.states) && parsed.states.length > 0) {
                 liveAircrafts = parseOpenSkyData(parsed.states);
+                if (liveAircrafts.length > 0) break;
               }
+            } else if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+              liveAircrafts = parsed.ac;
+              break;
             }
           }
         } catch (e: any) {
           if (e.name === 'AbortError') throw e;
-        }
-      }
-
-      // Candidate 5: Direct ADSB.lol / Airplanes.live / ADSB.one
-      if (liveAircrafts.length === 0) {
-        const directUrls = [
-          `https://api.airplanes.live/${pointPath}`,
-          `https://api.adsb.one/${pointPath}`,
-          `https://api.adsb.lol/${latLonPath}`,
-          `https://corsproxy.io/?${encodeURIComponent(`https://api.airplanes.live/${pointPath}`)}`
-        ];
-
-        for (const url of directUrls) {
-          try {
-            const res = await fetch(url, { signal: abortControllerRef.current.signal });
-            if (res.ok) {
-              const parsed = await res.json();
-              if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
-                liveAircrafts = parsed.ac;
-                break;
-              }
-            }
-          } catch (e: any) {
-            if (e.name === 'AbortError') throw e;
-          }
         }
       }
       
@@ -546,8 +482,8 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       console.error("Error fetching flight data:", err);
-      // Fallback mock data if network fails completely so radar is always active
       setAircrafts(getMockAircrafts(center.lat, center.lng));
+      setIsLiveData(false);
       setError(null);
     } finally {
       setLoading(false);
