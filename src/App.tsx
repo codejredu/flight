@@ -427,6 +427,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isLiveData, setIsLiveData] = useState<boolean>(false);
+  const [activeSourceKind, setActiveSourceKind] = useState<string>('ADSB.lol / Airplanes.live');
 
   // UI & Controls state
   const [searchQuery, setSearchQuery] = useState('');
@@ -531,6 +532,12 @@ export default function App() {
           }
 
           if (list.length > 0) {
+            let sourceLabel = 'OpenSky Network';
+            if (kind === 'fr24') sourceLabel = 'FlightRadar24';
+            else if (kind === 'readsb') sourceLabel = 'Airplanes.live / ADSB.lol';
+            else if (kind === 'local') sourceLabel = 'שרת Proxy מקומי';
+
+            setActiveSourceKind(sourceLabel);
             console.info(`[${kind}] ✓ ${list.length} aircrafts loaded successfully from ${url}`);
             liveAircrafts = list;
             break;
@@ -771,7 +778,7 @@ export default function App() {
                 <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isLiveData ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
               </span>
               <span className={`text-xs font-medium ${isLiveData ? 'text-emerald-400' : 'text-amber-300'}`}>
-                {isLiveData ? `מכ"ם חי ADS-B • ${aircrafts.length} טיסות` : `מכ"ם הדגמה / סימולציה • ${aircrafts.length} טיסות`}
+                {isLiveData ? `מכ"ם חי • ${activeSourceKind} • ${aircrafts.length} טיסות` : `מכ"ם הדגמה / סימולציה • ${aircrafts.length} טיסות`}
               </span>
             </div>
           </div>
@@ -993,7 +1000,9 @@ export default function App() {
                     <Compass className="w-4 h-4" /> מידע על אזור כיסוי
                   </h3>
                   <p className="text-slate-400 leading-relaxed">
-                    נתוני ADSB בזמן אמת מ-"ADSB.lol" סביב נקודת המרכז הנבחרת ({selectedPreset.name}). רדיוס חיפוש: {distanceKm} ק"מ.
+                    {isLiveData
+                      ? `נתוני ADSB בזמן אמת מ-"${activeSourceKind}" סביב נקודת המרכז הנבחרת (${selectedPreset.name}). רדיוס חיפוש: ${distanceKm} ק"מ.`
+                      : `נתוני הדגמה וסימולציה אזורית סביב נקודת המרכז הנבחרת (${selectedPreset.name}). רדיוס חיפוש: ${distanceKm} ק"מ.`}
                   </p>
                 </div>
               </div>
