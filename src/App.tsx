@@ -1,10 +1,12 @@
-/**
+ /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { APIProvider, Map, AdvancedMarker, Pin, useMap } from '@vis.gl/react-google-maps';
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { 
   Plane, Compass, Search, RefreshCw, SlidersHorizontal, Layers, 
   AlertTriangle, Volume2, VolumeX, Info, Activity, MapPin, 
@@ -160,15 +162,85 @@ const AircraftIcon = ({ type, className = "w-4 h-4", style }: { type?: string; c
   }
 };
 
-const MapController = ({ center }: { center: { lat: number; lng: number } }) => {
-  const map = useMap();
+const getAircraftSvgString = (type?: string) => {
+  switch (type) {
+    case 'helicopter':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 2C10.5 2 9.5 3.5 9.5 6V14C9.5 16 10.5 18 12 21C13.5 18 14.5 16 14.5 14V6C14.5 3.5 13.5 2 12 2ZM12 4H12.01M6 10H18M9 18H15" stroke="currentColor" stroke-width="1.5" /></svg>`;
+    case 'glider':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 4L13 9L23 11V12.5L13 11.5V17L14.5 19V20L12 19L9.5 20V19L11 17V11.5L1 12.5V11L11 9L12 4Z" /></svg>`;
+    case 'light':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 3C12.5 3 13 4.5 13 6V11L19 13V14.5L13 13.5V17.5L15 19.5V20.5L12 19.5L9 20.5V19.5L11 17.5V13.5L5 14.5V13L11 11V6C11 4.5 11.5 3 12 3Z" /></svg>`;
+    case 'turboprop':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 1.5C12.7 1.5 13.5 2.5 13.5 4.5V10.5L21.5 11.5V13.5L13.5 12.5V18.5L16.5 21V22.5L12 21.5L7.5 22.5L11 21V18.5L10.5 12.5L2.5 13.5V11.5L10.5 10.5V4.5C10.5 2.5 11.3 1.5 12 1.5Z" /><rect x="6" y="9" width="2" height="5" rx="0.8" /><rect x="16" y="9" width="2" height="5" rx="0.8" /></svg>`;
+    case 'narrowbody':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 1.5C12.5 1.5 13.5 3 13.5 5V9.5L20 13.5V15.5L13.5 13.5V18.5L16 21V22L12 21L8 22V21L10.5 18.5V13.5L4 15.5V13.5L10.5 9.5V5C10.5 3 11.5 1.5 12 1.5Z" /></svg>`;
+    case 'widebody':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 1C12.5 1 14 2.5 14 4.5V9L22 13V15.5L14 13.5V18L17 20.5V21.5L12 20.5L7 21.5V20.5L10 18V13.5L2 15.5V13L10 9V4.5C10 2.5 11.5 1 12 1Z" /></svg>`;
+    case 'heavy':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 0.5C12.8 0.5 14.5 1.5 14.5 3.5V7.5L19.5 8.5V10.5L14.5 9.5V14.5L23 17V19.5L14.5 17V21L17.5 23.5V24.5L12 23.5L6.5 24.5L9.5 21V17L1 19.5V17L9.5 14.5V9.5L4.5 10.5V8.5L9.5 7.5V3.5C9.5 1.5 11.2 0.5 12 0.5Z" /></svg>`;
+    case 'military':
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 0.5C12.5 0.5 14 2.5 14 5V11L22 17V19.5L14 16.5V21L16.5 23.5V24.5L12 23.5L7.5 24.5V23.5L10 21V16.5L2 19.5V17L10 11V5C10 2.5 11.5 0.5 12 0.5Z" /></svg>`;
+    default:
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 2L15 9L22 13V15L15 13.5V19L18 21.5V22.5L12 21.5L6 22.5V21.5L9 19V13.5L2 15V13L9 9L12 2Z" /></svg>`;
+  }
+};
 
+const createAircraftDivIcon = (ac: any, isSelected: boolean, showLabels: boolean) => {
+  const isEmergency = ac.squawk && ['7700', '7600', '7500'].includes(ac.squawk);
+  
+  let bgStyle = 'bg-cyan-950/90 text-cyan-400 border-cyan-500/60 shadow-cyan-950/50';
+  if (isEmergency) {
+    bgStyle = 'bg-red-600 text-white border-red-400 shadow-red-500/50 animate-pulse';
+  } else if (isSelected) {
+    bgStyle = 'bg-cyan-500 text-slate-950 border-white shadow-cyan-500/80 scale-125';
+  } else if (ac.categoryColor) {
+    bgStyle = `${ac.categoryColor.bg} ${ac.categoryColor.text} ${ac.categoryColor.border}`;
+  }
+
+  const svgHtml = getAircraftSvgString(ac.aircraftIconType);
+  const track = ac.track || 0;
+  const name = ac.flight?.trim() || ac.r?.trim() || ac.hex;
+
+  const html = `
+    <div class="relative flex flex-col items-center justify-center cursor-pointer group pointer-events-auto">
+      ${isSelected ? '<div class="absolute -inset-3 rounded-full bg-cyan-400/30 animate-ping pointer-events-none"></div>' : ''}
+      ${isEmergency ? '<div class="absolute -inset-3 rounded-full bg-red-500/50 animate-ping pointer-events-none"></div>' : ''}
+      <div class="p-1.5 rounded-full shadow-2xl flex items-center justify-center border transition-all duration-300 ${bgStyle}" style="transform: rotate(${track}deg);">
+        ${svgHtml}
+      </div>
+      ${showLabels ? `
+        <div class="mt-1 px-1.5 py-0.5 rounded bg-slate-950/90 text-[10px] font-bold font-mono text-cyan-300 border border-slate-700/80 shadow-md whitespace-nowrap backdrop-blur-sm pointer-events-none">
+          ${name}
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  return L.divIcon({
+    html,
+    className: 'aircraft-leaflet-marker',
+    iconSize: [36, 44],
+    iconAnchor: [18, 18]
+  });
+};
+
+const LeafletViewController = ({ center, zoom }: { center: { lat: number; lng: number }; zoom: number }) => {
+  const map = useMap();
   useEffect(() => {
     if (map) {
-      map.panTo(center);
+      map.flyTo([center.lat, center.lng], zoom, { duration: 1.2 });
     }
-  }, [map, center.lat, center.lng]);
+  }, [center.lat, center.lng, zoom, map]);
+  return null;
+};
 
+const LeafletEventsHandler = ({ onCenterChange }: { onCenterChange: (center: { lat: number; lng: number }, zoom: number) => void }) => {
+  const map = useMapEvents({
+    moveend: () => {
+      const c = map.getCenter();
+      onCenterChange({ lat: c.lat, lng: c.lng }, map.getZoom());
+    }
+  });
   return null;
 };
 
@@ -749,103 +821,56 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Center: Google Map */}
+        {/* Center: OpenStreetMap / Leaflet Map */}
         <main className="flex-1 relative h-full">
-          {API_KEY ? (
-            <APIProvider apiKey={API_KEY}>
-              <Map
-                mapId="DEMO_MAP_ID"
-                defaultCenter={center}
-                defaultZoom={zoom}
-                gestureHandling="greedy"
-                onCameraChanged={(ev) => {
-                  setZoom(ev.detail.zoom);
-                  if (debounceTimerRef.current) {
-                    clearTimeout(debounceTimerRef.current);
-                  }
-                  debounceTimerRef.current = setTimeout(() => {
-                    setCenter(ev.detail.center);
-                  }, 600);
-                }}
-                options={{
-                  styles: mapStyle === 'dark' ? darkMapStyles : [],
-                  disableDefaultUI: false,
-                  zoomControl: true,
-                  streetViewControl: false,
-                  mapTypeControl: false,
-                  fullscreenControl: true,
-                  gestureHandling: 'greedy'
-                }}
-                style={{ width: '100%', height: '100%' }}
-                internalUsageAttributionIds={["gmp_mcp_codeassist_v1_aistudio"]}
-              >
-                <MapController center={center} />
-                {filteredAircrafts.map((ac) => {
-                  if (!ac.lat || !ac.lon) return null;
-                  const isSelected = selectedFlight?.hex === ac.hex;
-                  const isEmergency = ac.squawk && ['7700', '7600', '7500'].includes(ac.squawk);
+          <MapContainer
+            center={[center.lat, center.lng]}
+            zoom={zoom}
+            zoomControl={true}
+            className="w-full h-full z-0"
+            style={{ background: '#090d16' }}
+          >
+            <LeafletViewController center={center} zoom={zoom} />
+            <LeafletEventsHandler onCenterChange={(newCenter, newZoom) => {
+              setZoom(newZoom);
+              if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+              debounceTimerRef.current = setTimeout(() => {
+                setCenter(newCenter);
+              }, 600);
+            }} />
+            <TileLayer
+              attribution={
+                mapStyle === 'dark'
+                  ? '&copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community'
+                  : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              }
+              url={
+                mapStyle === 'dark'
+                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+                  : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+              }
+              maxZoom={19}
+            />
+            {filteredAircrafts.map((ac) => {
+              if (!ac.lat || !ac.lon) return null;
+              const isSelected = selectedFlight?.hex === ac.hex;
+              const customIcon = createAircraftDivIcon(ac, isSelected, showLabels);
 
-                  return (
-                    <AdvancedMarker
-                      key={ac.hex}
-                      position={{ lat: ac.lat, lng: ac.lon }}
-                      onClick={() => {
-                        setSelectedFlight(ac);
-                        setIsSidebarOpen(true);
-                      }}
-                    >
-                      <div className="relative group cursor-pointer transition transform hover:scale-125">
-                        {/* Outer pulse for selection or emergency */}
-                        {isSelected && (
-                          <div className="absolute -inset-2 rounded-full bg-cyan-400/30 animate-ping pointer-events-none" />
-                        )}
-                        {isEmergency && (
-                          <div className="absolute -inset-2 rounded-full bg-red-500/50 animate-ping pointer-events-none" />
-                        )}
-
-                        {/* Aircraft Pin Icon */}
-                        <div
-                          className={`p-2 rounded-full shadow-xl flex items-center justify-center border transition-all ${
-                            isEmergency
-                              ? 'bg-red-600 text-white border-red-400 shadow-red-500/50'
-                              : isSelected
-                              ? 'bg-cyan-500 text-slate-950 border-white shadow-cyan-500/80 scale-110'
-                              : `${ac.categoryColor.bg} ${ac.categoryColor.text} ${ac.categoryColor.border}`
-                          }`}
-                          style={{ transform: `rotate(${ac.track || 0}deg)` }}
-                        >
-                          <AircraftIcon type={ac.aircraftIconType} className="w-4 h-4 fill-current" />
-                        </div>
-
-                        {/* Callsign label */}
-                        {showLabels && (
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 pointer-events-none whitespace-nowrap">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-md border ${
-                              isEmergency
-                                ? 'bg-red-950/90 text-red-200 border-red-500'
-                                : isSelected
-                                ? 'bg-cyan-950/90 text-cyan-200 border-cyan-500'
-                                : 'bg-slate-900/90 text-slate-200 border-slate-700'
-                            }`}>
-                              {getAircraftName(ac)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </AdvancedMarker>
-                  );
-                })}
-              </Map>
-            </APIProvider>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full bg-slate-900 text-slate-300 p-6 text-center">
-              <ShieldAlert className="w-12 h-12 text-amber-500 mb-2" />
-              <h2 className="text-lg font-bold text-white">נדרש מפתח API של Google Maps</h2>
-              <p className="text-xs text-slate-400 max-w-md mt-1">
-                אנא ודא שמפתח ה-API מוגדר כהלכה בסביבת ההרצה או באמצעות החיבור האוטומטי.
-              </p>
-            </div>
-          )}
+              return (
+                <Marker
+                  key={ac.hex}
+                  position={[ac.lat, ac.lon]}
+                  icon={customIcon}
+                  eventHandlers={{
+                    click: () => {
+                      setSelectedFlight(ac);
+                      setIsSidebarOpen(true);
+                    }
+                  }}
+                />
+              );
+            })}
+          </MapContainer>
 
           {/* Floating Map Toolbar */}
           <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
