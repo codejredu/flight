@@ -474,11 +474,12 @@ export default function App() {
 
       const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + delta).toFixed(2)},${(center.lat - delta).toFixed(2)},${(center.lng - delta).toFixed(2)},${(center.lng + delta).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
-      const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${(center.lat - 3.5).toFixed(2)}&lomin=${(center.lng - 3.5).toFixed(2)}&lamax=${(center.lat + 3.5).toFixed(2)}&lomax=${(center.lng + 3.5).toFixed(2)}`;
+      const openSkyRawUrl = `https://opensky-network.org/api/states/all?lamin=${(center.lat - 3.5).toFixed(2)}&lomin=${(center.lng - 3.5).toFixed(2)}&lamax=${(center.lat + 3.5).toFixed(2)}&lomax=${(center.lng + 3.5).toFixed(2)}`;
 
       const directEndpoints = [
-        openSkyUrl,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(openSkyUrl)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(openSkyRawUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(openSkyRawUrl)}`,
+        openSkyRawUrl,
         ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`] : []),
         `https://api.airplanes.live/${pointPath}`,
         `https://api.adsb.lol/${latLonPath}`,
@@ -486,7 +487,6 @@ export default function App() {
         `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`,
         `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`,
-        `https://api.allorigins.win/get?url=${encodeURIComponent(fr24RawUrl)}`,
         `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`
       ];
 
@@ -498,6 +498,12 @@ export default function App() {
           const res = await fetch(endpoint, fetchOptions);
           if (res.ok) {
             let parsed = await res.json();
+
+            if (typeof parsed === 'string') {
+              try {
+                parsed = JSON.parse(parsed);
+              } catch (e) {}
+            }
 
             // Unwrap proxy response wrappers if returned by allorigins or codetabs
             if (parsed && typeof parsed.contents === 'string') {
