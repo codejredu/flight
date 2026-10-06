@@ -466,17 +466,22 @@ export default function App() {
       setLoading(prev => aircrafts.length === 0 ? true : prev);
       
       let liveAircrafts: Aircraft[] = [];
+      const isGitHubPages = window.location.hostname.includes('github.io');
       const pointPath = `v2/point/${center.lat}/${center.lng}/${distanceKm}`;
       const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`;
       const delta = distanceKm > 200 ? 2.5 : 1.5;
 
+      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + 2).toFixed(2)},${(center.lat - 2).toFixed(2)},${(center.lng - 2).toFixed(2)},${(center.lng + 2).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
+
       const directEndpoints = [
-        `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`,
-        `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${center.lat + 1.8},${center.lat - 1.8},${center.lng - 1.8},${center.lng + 1.8}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`,
+        ...(!isGitHubPages ? [`/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${distanceKm}`] : []),
         `https://api.airplanes.live/${pointPath}`,
-        `https://api.adsb.one/${pointPath}`,
         `https://api.adsb.lol/${latLonPath}`,
-        `https://opensky-network.org/api/states/all?lamin=${center.lat - delta}&lomin=${center.lng - delta}&lamax=${center.lat + delta}&lomax=${center.lng + delta}`
+        `https://api.adsb.one/${pointPath}`,
+        `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${distanceKm}`,
+        `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`,
+        `https://opensky-network.org/api/states/all?lamin=${(center.lat - delta).toFixed(2)}&lomin=${(center.lng - delta).toFixed(2)}&lamax=${(center.lat + delta).toFixed(2)}&lomax=${(center.lng + delta).toFixed(2)}`
       ];
 
       for (const endpoint of directEndpoints) {
@@ -487,16 +492,29 @@ export default function App() {
           });
           if (res.ok) {
             const parsed = await res.json();
-            if (endpoint.includes('flightradar24.com')) {
+            
+            if (endpoint.startsWith('/api/flights')) {
+              if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
+                if (parsed.source === 'live_simulation_fallback' || parsed.source === 'regional_simulation') {
+                  liveAircrafts = parsed.ac;
+                  continue;
+                }
+                liveAircrafts = parsed.ac;
+                break;
+              }
+            } else if (endpoint.includes('flightradar24') || endpoint.includes('corsproxy') || endpoint.includes('allorigins') || (parsed && parsed.full_count !== undefined)) {
               const fr24Ac = parseFlightRadar24Data(parsed);
               if (fr24Ac.length > 0) {
                 liveAircrafts = fr24Ac;
                 break;
               }
-            } else if (endpoint.includes('opensky-network')) {
+            } else if (endpoint.includes('opensky-network') || (parsed && Array.isArray(parsed.states))) {
               if (parsed && Array.isArray(parsed.states) && parsed.states.length > 0) {
-                liveAircrafts = parseOpenSkyData(parsed.states);
-                if (liveAircrafts.length > 0) break;
+                const openSkyAc = parseOpenSkyData(parsed.states);
+                if (openSkyAc.length > 0) {
+                  liveAircrafts = openSkyAc;
+                  break;
+                }
               }
             } else if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
               liveAircrafts = parsed.ac;
