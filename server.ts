@@ -48,8 +48,10 @@ async function startServer() {
     if (openSkyTokenCache.token && Date.now() < openSkyTokenCache.exp) {
       return openSkyTokenCache.token;
     }
-    const clientId = process.env.OPENSKY_CLIENT_ID;
-    const clientSecret = process.env.OPENSKY_CLIENT_SECRET;
+    const rawClientId = process.env.OPENSKY_CLIENT_ID || '';
+    const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || '';
+    const clientId = rawClientId.trim().replace(/\s+/g, '');
+    const clientSecret = rawClientSecret.trim();
     if (!clientId || !clientSecret) return null;
 
     try {
@@ -67,17 +69,20 @@ async function startServer() {
       );
       if (!r.ok) return null;
       const j = await r.json();
-      openSkyTokenCache = {
-        token: j.access_token,
-        exp: Date.now() + Math.max(0, (j.expires_in - 60) * 1000)
-      };
-      return openSkyTokenCache.token;
+      if (j && j.access_token) {
+        openSkyTokenCache = {
+          token: j.access_token,
+          exp: Date.now() + Math.max(0, ((j.expires_in || 1800) - 60) * 1000)
+        };
+        return openSkyTokenCache.token;
+      }
+      return null;
     } catch (e) {
       return null;
     }
   }
 
-  // API Proxy endpoint for OpenSky flights with optional OAuth2 token authentication
+  // API Proxy endpoint for OpenSky flights with optional OAuth2 token or Basic authentication
   app.get('/api/opensky', async (req, res) => {
     try {
       const lamin = req.query.lamin || '29.50';
@@ -91,9 +96,18 @@ async function startServer() {
         'Accept': 'application/json'
       };
 
+      const rawClientId = process.env.OPENSKY_CLIENT_ID || '';
+      const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || '';
+      const clientId = rawClientId.trim().replace(/\s+/g, '');
+      const clientSecret = rawClientSecret.trim();
+
       const token = await getOpenSkyToken();
       if (token) {
         headers.Authorization = `Bearer ${token}`;
+      } else if (clientId && clientSecret) {
+        // Fallback to Basic Auth if OAuth token fails
+        const authString = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+        headers.Authorization = `Basic ${authString}`;
       }
 
       const response = await fetch(targetUrl, { headers });
