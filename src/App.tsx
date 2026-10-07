@@ -106,7 +106,11 @@ const AircraftIcon = ({ type, className = "w-4 h-4", style }: { type?: string; c
     case 'helicopter':
       return (
         <svg viewBox="0 0 24 24" className={className} style={style} fill="currentColor">
-          <path d="M12 2C10.5 2 9.5 3.5 9.5 6V14C9.5 16 10.5 18 12 21C13.5 18 14.5 16 14.5 14V6C14.5 3.5 13.5 2 12 2ZM12 4H12.01M6 10H18M9 18H15" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <ellipse cx="12" cy="12" rx="3.5" ry="5.5" />
+          <rect x="11" y="17" width="2" height="6" rx="1" />
+          <line x1="10" y1="22" x2="16" y2="22" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M10 8.5C10 7.5 11 6.5 12 6.5C13 6.5 14 7.5 14 8.5Z" fill="#090d16" />
         </svg>
       );
     case 'glider':
@@ -165,7 +169,7 @@ const AircraftIcon = ({ type, className = "w-4 h-4", style }: { type?: string; c
 const getAircraftSvgString = (type?: string) => {
   switch (type) {
     case 'helicopter':
-      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 2C10.5 2 9.5 3.5 9.5 6V14C9.5 16 10.5 18 12 21C13.5 18 14.5 16 14.5 14V6C14.5 3.5 13.5 2 12 2ZM12 4H12.01M6 10H18M9 18H15" stroke="currentColor" stroke-width="1.5" /></svg>`;
+      return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><ellipse cx="12" cy="12" rx="3.5" ry="5.5"/><rect x="11" y="17" width="2" height="6" rx="1"/><line x1="10" y1="22" x2="16" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M10 8.5C10 7.5 11 6.5 12 6.5C13 6.5 14 7.5 14 8.5Z" fill="#090d16"/></svg>`;
     case 'glider':
       return `<svg viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M12 4L13 9L23 11V12.5L13 11.5V17L14.5 19V20L12 19L9.5 20V19L11 17V11.5L1 12.5V11L11 9L12 4Z" /></svg>`;
     case 'light':
@@ -319,31 +323,15 @@ const LeafletEventsHandler = ({ onCenterChange, isProgrammaticMoveRef }: { onCen
 
 const enrichAircraftData = (ac: Aircraft) => {
   const callsign = (ac.flight || '').trim().toUpperCase();
-  const t = (ac.t || '').toUpperCase();
+  const t = (ac.t || '').trim().toUpperCase();
+  const r = (ac.r || '').trim().toUpperCase();
+  const cat = (ac.category || '').trim().toUpperCase();
   let airlineName = 'תעופה כללית / פרטי';
   let route = 'אזור המרכז / טיסה מקומית';
   let colorKey = 'default';
   const countryInfo = getCountryInfo(ac);
 
-  let aircraftIconType = 'narrowbody';
-  if (colorKey === 'military' || t.includes('F15') || t.includes('F16') || t.includes('F35') || t.includes('C130') || t.includes('B52') || t.includes('C17')) {
-    aircraftIconType = 'military';
-  } else if (t.includes('A388') || t.includes('A380') || t.includes('B744') || t.includes('B748') || t.includes('B747')) {
-    aircraftIconType = 'heavy';
-  } else if (t.includes('B772') || t.includes('B77W') || t.includes('B788') || t.includes('B789') || t.includes('A359') || t.includes('A333')) {
-    aircraftIconType = 'widebody';
-  } else if (t.includes('AT76') || t.includes('AT72') || t.includes('AT75') || t.includes('AT45') || t.includes('AT43') || t.includes('ATR') || t.includes('DH8D') || t.includes('DH8') || t.includes('DHC8') || t.includes('SF34') || t.includes('PC12') || t.includes('B350') || t.includes('BE20') || t.includes('MA60') || t.includes('AN24') || t.includes('F50')) {
-    aircraftIconType = 'turboprop';
-  } else if (t.includes('H64') || t.includes('B412') || t.includes('EC35') || t.includes('S76') || t.includes('R44')) {
-    aircraftIconType = 'helicopter';
-  } else if (t.includes('GLID') || t.includes('SF25')) {
-    aircraftIconType = 'glider';
-  } else if (t.includes('C172') || t.includes('PA28') || t.includes('SR22')) {
-    aircraftIconType = 'light';
-  } else {
-    aircraftIconType = 'narrowbody';
-  }
-
+  // 1. Determine airline or military status first so colorKey is populated
   if (callsign.startsWith('LY')) {
     airlineName = 'אל על (EL AL)';
     route = 'תל אביב (TLV) ⇄ יעדים בינלאומיים';
@@ -372,12 +360,58 @@ const enrichAircraftData = (ac: Aircraft) => {
     airlineName = 'לואו-קוסט (Ryanair / Wizz / EasyJet)';
     route = 'אירופה ⇄ ישראל / קפריסין';
     colorKey = 'lowcost';
-  } else if (callsign.startsWith('IAF') || callsign.startsWith('RCH') || callsign.startsWith('CNV') || callsign.startsWith('MIL') || callsign.startsWith('ASY') || t.includes('C130') || t.includes('F15') || t.includes('F16') || t.includes('F35')) {
+  } else if (
+    callsign.startsWith('IAF') || callsign.startsWith('RCH') || callsign.startsWith('CNV') ||
+    callsign.startsWith('MIL') || callsign.startsWith('ASY') || callsign.startsWith('NAVY') ||
+    callsign.startsWith('ARMY') || (callsign.startsWith('ISR') && r.startsWith('4X-1')) ||
+    t.includes('F15') || t.includes('F16') || t.includes('F35') || t.includes('F18') ||
+    t.includes('C130') || t.includes('C17') || t.includes('C5') || t.includes('B52') ||
+    t.includes('KC135') || t.includes('KC46') || r.startsWith('4X-0') || r.startsWith('4X-1') ||
+    r.startsWith('4X-2') || r.startsWith('4X-3') || r.startsWith('4X-4') || r.startsWith('4X-5') || r.startsWith('4X-8')
+  ) {
     airlineName = 'חיל האוויר / תעופה צבאית (Military)';
     route = 'טיסה מבצעית / אימון טקטי';
     colorKey = 'military';
   }
 
+  // 2. Identify aircraft icon type
+  const isHelicopter =
+    cat === 'A7' ||
+    callsign.startsWith('HEL') || callsign.startsWith('HELI') || callsign.startsWith('COPTER') ||
+    callsign.startsWith('LIFE') || callsign.startsWith('MED') || callsign.startsWith('MADA') ||
+    callsign.startsWith('POLICE') || callsign.startsWith('EH') ||
+    t.includes('H64') || t.includes('AH64') || t.includes('UH60') || t.includes('H60') ||
+    t.includes('S70') || t.includes('S76') || t.includes('S92') || t.includes('B412') ||
+    t.includes('B206') || t.includes('B407') || t.includes('B429') || t.includes('B505') ||
+    t.includes('EC35') || t.includes('EC45') || t.includes('EC20') || t.includes('EC30') ||
+    t.includes('H125') || t.includes('H130') || t.includes('H135') || t.includes('H145') ||
+    t.includes('H155') || t.includes('H160') || t.includes('AW139') || t.includes('AW109') ||
+    t.includes('AW169') || t.includes('AW189') || t.includes('A109') || t.includes('A119') ||
+    t.includes('R44') || t.includes('R22') || t.includes('R66') || t.includes('AS50') ||
+    t.includes('AS55') || t.includes('AS65') || t.includes('CH47') || t.includes('CH53') ||
+    t.includes('MD50') || t.includes('BK117') || t.includes('BO105') || t.includes('V22') ||
+    t.includes('ROTOR') || t.includes('HELI');
+
+  let aircraftIconType = 'narrowbody';
+  if (isHelicopter) {
+    aircraftIconType = 'helicopter';
+  } else if (colorKey === 'military' || t.includes('F15') || t.includes('F16') || t.includes('F35') || t.includes('C130') || t.includes('B52') || t.includes('C17')) {
+    aircraftIconType = 'military';
+  } else if (t.includes('A388') || t.includes('A380') || t.includes('B744') || t.includes('B748') || t.includes('B747')) {
+    aircraftIconType = 'heavy';
+  } else if (t.includes('B772') || t.includes('B77W') || t.includes('B788') || t.includes('B789') || t.includes('A359') || t.includes('A333')) {
+    aircraftIconType = 'widebody';
+  } else if (t.includes('AT76') || t.includes('AT72') || t.includes('AT75') || t.includes('AT45') || t.includes('AT43') || t.includes('ATR') || t.includes('DH8D') || t.includes('DH8') || t.includes('DHC8') || t.includes('SF34') || t.includes('PC12') || t.includes('B350') || t.includes('BE20') || t.includes('MA60') || t.includes('AN24') || t.includes('F50')) {
+    aircraftIconType = 'turboprop';
+  } else if (t.includes('GLID') || t.includes('SF25')) {
+    aircraftIconType = 'glider';
+  } else if (t.includes('C172') || t.includes('PA28') || t.includes('SR22')) {
+    aircraftIconType = 'light';
+  } else {
+    aircraftIconType = 'narrowbody';
+  }
+
+  // 3. Category colors
   let categoryColor = {
     bg: 'bg-cyan-950/80',
     text: 'text-cyan-400',
@@ -388,14 +422,18 @@ const enrichAircraftData = (ac: Aircraft) => {
 
   if (ac.squawk && ['7700', '7600', '7500'].includes(ac.squawk)) {
     categoryColor = { bg: 'bg-red-950/90', text: 'text-red-400', border: 'border-red-500', badgeBg: 'bg-red-500/20', hex: '#ef4444' };
+  } else if (colorKey === 'military' || aircraftIconType === 'military') {
+    // High-visibility Military Olive Gold
+    categoryColor = { bg: 'bg-lime-950/90', text: 'text-lime-300', border: 'border-lime-500', badgeBg: 'bg-lime-500/25', hex: '#84cc16' };
+  } else if (aircraftIconType === 'helicopter') {
+    // High-visibility Helicopter Orange
+    categoryColor = { bg: 'bg-orange-950/90', text: 'text-orange-400', border: 'border-orange-500', badgeBg: 'bg-orange-500/25', hex: '#f97316' };
   } else if (t.includes('A388') || t.includes('B772') || t.includes('B77W') || t.includes('B789') || t.includes('A359')) {
     categoryColor = { bg: 'bg-purple-950/80', text: 'text-purple-400', border: 'border-purple-500/60', badgeBg: 'bg-purple-500/20', hex: '#a855f7' };
   } else if (colorKey === 'elal') {
     categoryColor = { bg: 'bg-blue-950/80', text: 'text-blue-400', border: 'border-blue-500/60', badgeBg: 'bg-blue-500/20', hex: '#3b82f6' };
   } else if (colorKey === 'lowcost') {
     categoryColor = { bg: 'bg-amber-950/80', text: 'text-amber-400', border: 'border-amber-500/60', badgeBg: 'bg-amber-500/20', hex: '#f59e0b' };
-  } else if (colorKey === 'military') {
-    categoryColor = { bg: 'bg-amber-900/90', text: 'text-amber-200', border: 'border-amber-600', badgeBg: 'bg-amber-950/60', hex: '#78350f' };
   } else if (t.includes('AT76') || t.includes('DH8D')) {
     categoryColor = { bg: 'bg-emerald-950/80', text: 'text-emerald-400', border: 'border-emerald-500/60', badgeBg: 'bg-emerald-500/20', hex: '#10b981' };
   }
