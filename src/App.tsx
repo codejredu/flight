@@ -473,7 +473,7 @@ export default function App() {
   // UI & Controls state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFlight, setSelectedFlight] = useState<Aircraft | null>(null);
-  const [refreshInterval, setRefreshInterval] = useState<number>(20); // seconds
+  const [refreshInterval, setRefreshInterval] = useState<number>(10); // seconds
   const [isAutoRefresh, setIsAutoRefresh] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [mapStyle, setMapStyle] = useState<'dark' | 'standard'>('dark');
@@ -518,16 +518,14 @@ export default function App() {
       type SourceKind = 'opensky' | 'fr24' | 'readsb' | 'local';
       interface Source { url: string; kind: SourceKind; name: string }
 
-      const lat = center.lat.toFixed(3);
-      const lon = center.lng.toFixed(3);
-      const adsbLol = `https://api.adsb.lol/v2/point/${lat}/${lon}/${effectiveDist}`;
-
       const sources: Source[] = [
-        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(adsbLol)}`, kind: 'readsb', name: 'ADSB.lol דרך CodeTabs' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(adsbLol)}`, kind: 'readsb', name: 'ADSB.lol דרך AllOrigins' },
-        { url: `https://api.cors.lol/url=${adsbLol}`, kind: 'readsb', name: 'ADSB.lol דרך cors.lol' },
-        { url: `https://flyradar-proxy.scratchjredu.workers.dev/?lat=${lat}&lon=${lon}&dist=${effectiveDist}`, kind: 'readsb', name: 'Cloudflare Worker' },
-        { url: adsbLol, kind: 'readsb', name: 'ADSB.lol ישיר' },
+        { url: `https://api.adsb.lol/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'ADSB.lol' },
+        { url: `https://api.airplanes.live/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'Airplanes.live' },
+        { url: `https://api.adsb.fi/v2/lat/${center.lat.toFixed(3)}/lon/${center.lng.toFixed(3)}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi' },
+        ...(!isGitHubPages ? [
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' },
+          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת OpenSky (עם API Client)' }
+        ] : [])
       ];
 
       setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'ממתין לחיבור...' })));
@@ -541,7 +539,7 @@ export default function App() {
       // Execute queries with immediate abort on first successful server response
       const fetchPromises = sources.map(async (source, index) => {
         const sourceCtrl = sourceControllers[index];
-        const timeoutId = setTimeout(() => sourceCtrl.abort('timeout'), 9000);
+        const timeoutId = setTimeout(() => sourceCtrl.abort('timeout'), 4500);
 
         const handleCycleAbort = () => sourceCtrl.abort('cycle_aborted');
         cycleController.signal.addEventListener('abort', handleCycleAbort);
