@@ -1,4 +1,4 @@
- import express from 'express';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
@@ -113,52 +113,69 @@ async function startServer() {
     }
   });
 
-  // API Proxy endpoint for ADSB.lol flights
+  // API Proxy endpoint for ADSB flights (Aggregates Airplanes.live, ADSB.lol, ADSB.fi)
   app.get('/api/flights', async (req, res) => {
     const latNum = parseFloat(req.query.lat as string) || 32.0;
     const lonNum = parseFloat(req.query.lon as string) || 35.0;
-    const dist = req.query.dist || '100';
-    const targetUrl = `https://api.adsb.lol/v2/lat/${latNum}/lon/${lonNum}/dist/${dist}`;
+    const dist = req.query.dist || '200';
     
+    const endpoints = [
+      `https://api.airplanes.live/v2/point/${latNum}/${lonNum}/${dist}`,
+      `https://api.adsb.lol/v2/point/${latNum}/${lonNum}/${dist}`,
+      `https://api.adsb.fi/v2/lat/${latNum}/lon/${lonNum}/dist/${dist}`
+    ];
+
     try {
-      const response = await fetch(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
-          'Accept': 'application/json'
+      const fetchPromises = endpoints.map(async (url) => {
+        try {
+          const r = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
+              'Accept': 'application/json'
+            },
+            signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined
+          });
+          if (!r.ok) return [];
+          const data = await r.json();
+          return Array.isArray(data.ac) ? data.ac : [];
+        } catch {
+          return [];
         }
       });
 
-      if (!response.ok) {
-        // If rate limited or error, silently fall back to simulation without logging error
-        if (simulatedFlights.length === 0 || Math.abs(latNum - lastCenterLat) > 0.5 || Math.abs(lonNum - lastCenterLon) > 0.5) {
-          initSimulatedFlights(latNum, lonNum);
-        } else {
-          stepSimulatedFlights();
-        }
+      const results = await Promise.all(fetchPromises);
+      const combinedMap = new Map<string, any>();
+      results.forEach(list => {
+        list.forEach((ac: any) => {
+          const key = ac.hex || ac.flight || `${ac.lat}_${ac.lon}`;
+          if (key && !combinedMap.has(key)) {
+            combinedMap.set(key, ac);
+          }
+        });
+      });
 
+      const combinedList = Array.from(combinedMap.values());
+      if (combinedList.length > 0) {
         return res.json({
-          ac: simulatedFlights,
-          total: simulatedFlights.length,
-          source: 'live_simulation_fallback'
+          ac: combinedList,
+          total: combinedList.length,
+          source: 'multi_adsb_server_proxy'
         });
       }
 
-      const data = await response.json();
-      if (!data.ac || data.ac.length === 0) {
-        if (simulatedFlights.length === 0 || Math.abs(latNum - lastCenterLat) > 0.5 || Math.abs(lonNum - lastCenterLon) > 0.5) {
-          initSimulatedFlights(latNum, lonNum);
-        } else {
-          stepSimulatedFlights();
-        }
-        return res.json({
-          ac: simulatedFlights,
-          total: simulatedFlights.length,
-          source: 'regional_simulation'
-        });
+      // Fallback to simulation if no live aircraft found
+      if (simulatedFlights.length === 0 || Math.abs(latNum - lastCenterLat) > 0.5 || Math.abs(lonNum - lastCenterLon) > 0.5) {
+        initSimulatedFlights(latNum, lonNum);
+      } else {
+        stepSimulatedFlights();
       }
-      res.json(data);
+
+      return res.json({
+        ac: simulatedFlights,
+        total: simulatedFlights.length,
+        source: 'regional_simulation'
+      });
     } catch (error: any) {
-      // Silently fall back to simulation
       if (simulatedFlights.length === 0 || Math.abs(latNum - lastCenterLat) > 0.5 || Math.abs(lonNum - lastCenterLon) > 0.5) {
         initSimulatedFlights(latNum, lonNum);
       } else {
@@ -170,6 +187,24 @@ async function startServer() {
         total: simulatedFlights.length,
         source: 'live_simulation_fallback'
       });
+    }
+  });
+
+  // Generic CORS proxy endpoint
+  app.get('/api/proxy', async (req, res) => {
+    const targetUrl = req.query.url as string;
+    if (!targetUrl) return res.status(400).send('Missing url parameter');
+
+    try {
+      const response = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
+          'Accept': 'application/json'
+        }
+      });
+      res.status(response.status).send(await response.text());
+    } catch (e: any) {
+      res.status(502).json({ error: e.message });
     }
   });
 
