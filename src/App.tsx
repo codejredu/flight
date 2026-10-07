@@ -467,7 +467,7 @@ export default function App() {
   const [isLiveData, setIsLiveData] = useState<boolean>(false);
   const [activeSourceKind, setActiveSourceKind] = useState<string>('ADSB.lol / Airplanes.live');
   const [currentConnectingServer, setCurrentConnectingServer] = useState<string | null>(null);
-  const [connectionAttempts, setConnectionAttempts] = useState<{ name: string; kind: string; status: 'connecting' | 'success' | 'failed'; message?: string }[]>([]);
+  const [connectionAttempts, setConnectionAttempts] = useState<{ name: string; kind: string; status: 'connecting' | 'success' | 'failed' | 'stopped'; message?: string }[]>([]);
   const [showServerDetails, setShowServerDetails] = useState<boolean>(false);
 
   // UI & Controls state
@@ -498,16 +498,16 @@ export default function App() {
 
   // Fetch flights function with request cancellation
   const fetchFlights = useCallback(async () => {
-    // Abort previous pending fetch
+    // Abort previous pending fetch cycle
     if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+      abortControllerRef.current.abort('new_fetch_started');
     }
-    abortControllerRef.current = new AbortController();
+    const cycleController = new AbortController();
+    abortControllerRef.current = cycleController;
 
     try {
       setLoading(prev => aircrafts.length === 0 ? true : prev);
       
-      let liveAircrafts: Aircraft[] = [];
       const isGitHubPages = window.location.hostname.includes('github.io');
       const effectiveDist = Math.max(distanceKm, 200);
       const pointPath = `v2/point/${center.lat}/${center.lng}/${effectiveDist}`;
@@ -526,34 +526,41 @@ export default function App() {
         { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB (ישיר)' },
         { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network (ישיר)' },
         { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network (ישיר)' },
+        ...(!isGitHubPages ? [
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' },
+          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' }
+        ] : []),
         { url: osDirectUrl, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
         { url: `https://corsproxy.io/?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CorsProxy)' },
         { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (AllOrigins)' },
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CodeTabs)' },
         { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CorsProxy.io)' },
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CodeTabs Proxy)' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' },
-        ...(!isGitHubPages ? [
-          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' },
-          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' }
-        ] : [])
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' }
       ];
 
-      setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'שולח בקשה במקביל...' })));
-      setCurrentConnectingServer('סורק את כל השרתים במקביל...');
+      setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'ממתין לחיבור...' })));
+      setCurrentConnectingServer('מנסה להתחבר לשרת מהיר ביותר...');
 
-      // Execute ALL queries in parallel using Promise.allSettled with 5s timeouts
-      const fetchPromises = sources.map(async (source) => {
+      const sourceControllers = sources.map(() => new AbortController());
+      let hasConnectedWithData = false;
+      const successfulServers: string[] = [];
+      const mergedMap = new Map<string, Aircraft>();
+
+      // Execute queries with immediate abort on first successful server response
+      const fetchPromises = sources.map(async (source, index) => {
+        const sourceCtrl = sourceControllers[index];
+        const timeoutId = setTimeout(() => sourceCtrl.abort('timeout'), 4500);
+
+        const handleCycleAbort = () => sourceCtrl.abort('cycle_aborted');
+        cycleController.signal.addEventListener('abort', handleCycleAbort);
+
         try {
-          const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined;
-          const signal = timeoutSignal && AbortSignal.any 
-            ? AbortSignal.any([abortControllerRef.current!.signal, timeoutSignal])
-            : abortControllerRef.current!.signal;
+          const res = await fetch(source.url, { signal: sourceCtrl.signal });
+          clearTimeout(timeoutId);
+          cycleController.signal.removeEventListener('abort', handleCycleAbort);
 
-          const res = await fetch(source.url, { signal });
-          if (!res.ok) {
-            throw new Error(`שגיאה ${res.status}`);
-          }
+          if (!res.ok) throw new Error(`שגיאה ${res.status}`);
           let parsed = await res.json();
 
           if (typeof parsed === 'string') {
@@ -578,66 +585,93 @@ export default function App() {
             list = Array.isArray(parsed?.ac) ? parsed.ac : [];
           }
 
+          if (list.length > 0) {
+            successfulServers.push(source.name);
+            setConnectionAttempts(prev => prev.map(a => a.name === source.name ? {
+              ...a,
+              status: 'success',
+              message: `✓ מחובר! ${list.length} טיסות התקבלו`
+            } : a));
+
+            list.forEach(ac => {
+              const hexKey = (ac.hex || '').trim().toUpperCase();
+              if (!hexKey) return;
+
+              const existing = mergedMap.get(hexKey);
+              if (!existing) {
+                mergedMap.set(hexKey, { ...ac, hex: hexKey });
+              } else {
+                mergedMap.set(hexKey, {
+                  ...existing,
+                  flight: (existing.flight && existing.flight.trim() !== '') ? existing.flight : ac.flight,
+                  r: existing.r || ac.r,
+                  t: existing.t || ac.t,
+                  alt_baro: existing.alt_baro !== undefined ? existing.alt_baro : ac.alt_baro,
+                  gs: existing.gs !== undefined ? existing.gs : ac.gs,
+                  track: existing.track !== undefined ? existing.track : ac.track,
+                  squawk: existing.squawk || ac.squawk,
+                  emergency: existing.emergency || ac.emergency,
+                  category: existing.category || ac.category
+                });
+              }
+            });
+
+            // PROTOCOL REQUIREMENT: As soon as 1 server connects with valid flight data, stop all remaining connection attempts!
+            if (!hasConnectedWithData) {
+              hasConnectedWithData = true;
+
+              // Immediately abort remaining pending fetches
+              sourceControllers.forEach((ctrl, i) => {
+                if (i !== index) {
+                  ctrl.abort('connected_elsewhere');
+                }
+              });
+
+              // Update remaining connecting sources to 'stopped'
+              setConnectionAttempts(prev => prev.map((a, i) => {
+                if (i !== index && a.status === 'connecting') {
+                  return {
+                    ...a,
+                    status: 'stopped',
+                    message: 'הופסק - התקבל חיבור לשרת ראשוני'
+                  };
+                }
+                return a;
+              }));
+            }
+          } else {
+            setConnectionAttempts(prev => prev.map(a => a.name === source.name ? {
+              ...a,
+              status: 'failed',
+              message: 'ללא נתוני טיסות ברדיוס'
+            } : a));
+          }
+
           return { source, list };
         } catch (err: any) {
-          throw new Error(err.message || 'שגיאת התחברות');
+          clearTimeout(timeoutId);
+          cycleController.signal.removeEventListener('abort', handleCycleAbort);
+
+          const isStoppedDueToOther = sourceCtrl.signal.aborted && sourceCtrl.signal.reason === 'connected_elsewhere';
+          
+          setConnectionAttempts(prev => prev.map(a => a.name === source.name ? {
+            ...a,
+            status: isStoppedDueToOther ? 'stopped' : 'failed',
+            message: isStoppedDueToOther ? 'הופסק - התקבל חיבור לשרת ראשוני' : (err.message || 'שגיאת חיבור')
+          } : a));
+
+          throw err;
         }
       });
 
-      const settledResults = await Promise.allSettled(fetchPromises);
+      await Promise.allSettled(fetchPromises);
       setCurrentConnectingServer(null);
 
-      const mergedMap = new Map<string, Aircraft>();
-      const successfulServers: string[] = [];
-
-      settledResults.forEach((res, index) => {
-        const source = sources[index];
-        if (res.status === 'fulfilled' && res.value.list.length > 0) {
-          successfulServers.push(source.name);
-          setConnectionAttempts(prev => prev.map(a => a.name === source.name ? {
-            ...a,
-            status: 'success',
-            message: `${res.value.list.length} טיסות התקבלו`
-          } : a));
-
-          res.value.list.forEach(ac => {
-            const hexKey = (ac.hex || '').trim().toUpperCase();
-            if (!hexKey) return;
-
-            const existing = mergedMap.get(hexKey);
-            if (!existing) {
-              mergedMap.set(hexKey, { ...ac, hex: hexKey });
-            } else {
-              // Merge missing fields for complete metadata
-              mergedMap.set(hexKey, {
-                ...existing,
-                flight: (existing.flight && existing.flight.trim() !== '') ? existing.flight : ac.flight,
-                r: existing.r || ac.r,
-                t: existing.t || ac.t,
-                alt_baro: existing.alt_baro !== undefined ? existing.alt_baro : ac.alt_baro,
-                gs: existing.gs !== undefined ? existing.gs : ac.gs,
-                track: existing.track !== undefined ? existing.track : ac.track,
-                squawk: existing.squawk || ac.squawk,
-                emergency: existing.emergency || ac.emergency,
-                category: existing.category || ac.category
-              });
-            }
-          });
-        } else {
-          const errorMsg = res.status === 'rejected' ? res.reason.message : 'אין מטוסים ברדיוס';
-          setConnectionAttempts(prev => prev.map(a => a.name === source.name ? {
-            ...a,
-            status: 'failed',
-            message: errorMsg
-          } : a));
-        }
-      });
-
-      liveAircrafts = Array.from(mergedMap.values());
+      const liveAircrafts = Array.from(mergedMap.values());
 
       if (successfulServers.length > 0) {
         const sourceLabel = successfulServers.length > 1
-          ? `שילוב מרובה-שרתים (${successfulServers.length} שרתים פעילים)`
+          ? `חיבור פעיל (${successfulServers.join(', ')})`
           : successfulServers[0];
         setActiveSourceKind(sourceLabel);
       }
@@ -666,8 +700,7 @@ export default function App() {
         setLastUpdated(new Date());
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        setAircrafts(prev => prev.length > 0 ? prev : getMockAircrafts(center.lat, center.lng));
+      if (err.name === 'AbortError' || err === 'new_fetch_started' || err === 'cycle_aborted') {
         return;
       }
       console.error("Error fetching flight data:", err);
@@ -1030,6 +1063,8 @@ export default function App() {
                       ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
                       : attempt.status === 'connecting'
                       ? 'bg-cyan-950/50 border-cyan-500/50 text-cyan-200 animate-pulse'
+                      : attempt.status === 'stopped'
+                      ? 'bg-amber-950/20 border-amber-500/20 text-amber-300/80'
                       : 'bg-slate-950/60 border-slate-800 text-slate-400'
                   }`}
                 >
@@ -1048,6 +1083,11 @@ export default function App() {
                       <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30 flex items-center gap-1">
                         <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                         בודק...
+                      </span>
+                    )}
+                    {attempt.status === 'stopped' && (
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                        ⏹ הופסק (נמצא שרת)
                       </span>
                     )}
                     {attempt.status === 'failed' && (
