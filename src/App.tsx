@@ -519,12 +519,14 @@ export default function App() {
       interface Source { url: string; kind: SourceKind; name: string }
 
       const sources: Source[] = [
+        ...(!isGitHubPages ? [
+          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'OpenSky Network (עם API Client)' }
+        ] : []),
         { url: `https://api.adsb.lol/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'ADSB.lol' },
         { url: `https://api.airplanes.live/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'Airplanes.live' },
         { url: `https://api.adsb.fi/v2/lat/${center.lat.toFixed(3)}/lon/${center.lng.toFixed(3)}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi' },
         ...(!isGitHubPages ? [
-          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' },
-          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת OpenSky (עם API Client)' }
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' }
         ] : [])
       ];
 
