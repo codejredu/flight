@@ -516,6 +516,7 @@ export default function App() {
       // Bounding box size: ±2.5° (~25 square degrees = 1 OpenSky credit)
       const box = 2.5;
       const osQuery = `lamin=${(center.lat - box).toFixed(2)}&lomin=${(center.lng - box).toFixed(2)}&lamax=${(center.lat + box).toFixed(2)}&lomax=${(center.lng + box).toFixed(2)}`;
+      const osDirectUrl = `https://opensky-network.org/api/states/all?${osQuery}`;
       const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + box).toFixed(2)},${(center.lat - box).toFixed(2)},${(center.lng - box).toFixed(2)},${(center.lng + box).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
       type SourceKind = 'opensky' | 'fr24' | 'readsb' | 'local';
@@ -525,9 +526,14 @@ export default function App() {
         { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB' },
         { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network' },
         { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network' },
-        { url: `https://opensky-network.org/api/states/all?${osQuery}`, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
-        ...(!isGitHubPages ? [{ url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' }] : []),
-        ...(!isGitHubPages ? [{ url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Proxy)' }] : []),
+        { url: osDirectUrl, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
+        ...(isGitHubPages ? [
+          { url: `https://corsproxy.io/?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky' as const, name: 'OpenSky Network (CorsProxy)' },
+          { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky' as const, name: 'OpenSky Network (AllOrigins)' }
+        ] : [
+          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' },
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Proxy)' }
+        ]),
         { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CorsProxy.io)' },
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CodeTabs Proxy)' },
         { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' }
@@ -998,6 +1004,22 @@ export default function App() {
                 בדוק את כל השרתים מחדש
               </button>
             </div>
+
+            {window.location.hostname.includes('github.io') ? (
+              <div className="mb-3 p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2">
+                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong>מארח ב-GitHub Pages (אפליקציה סטטית):</strong> ב-GitHub Pages אין שרת Node פנימי, ולכן הבקשות נשלחות ישירות מהדפדפן. שרתי ה-ADSB החופשיים (Airplanes.live, ADSB.lol, ADSB.fi) ופרוקסי CORS פועלים ישירות מהלקוח.
+                </div>
+              </div>
+            ) : (
+              <div className="mb-3 p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-200 text-xs flex items-start gap-2">
+                <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong>מצב תצוגה / שרת מקומי (Node Express Proxy active):</strong> פועל שרת Node פנימי המבצע בקשות שרת-אל-שרת עוקפות CORS ומשפר את מהירות ואמינות הנתונים.
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               {connectionAttempts.map((attempt, idx) => (
