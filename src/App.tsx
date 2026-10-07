@@ -466,6 +466,9 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isLiveData, setIsLiveData] = useState<boolean>(false);
   const [activeSourceKind, setActiveSourceKind] = useState<string>('ADSB.lol / Airplanes.live');
+  const [currentConnectingServer, setCurrentConnectingServer] = useState<string | null>(null);
+  const [connectionAttempts, setConnectionAttempts] = useState<{ name: string; kind: string; status: 'connecting' | 'success' | 'failed'; message?: string }[]>([]);
+  const [showServerDetails, setShowServerDetails] = useState<boolean>(false);
 
   // UI & Controls state
   const [searchQuery, setSearchQuery] = useState('');
@@ -516,21 +519,26 @@ export default function App() {
       const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + box).toFixed(2)},${(center.lat - box).toFixed(2)},${(center.lng - box).toFixed(2)},${(center.lng + box).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
       type SourceKind = 'opensky' | 'fr24' | 'readsb' | 'local';
-      interface Source { url: string; kind: SourceKind }
+      interface Source { url: string; kind: SourceKind; name: string }
 
       const sources: Source[] = [
-        ...(!isGitHubPages ? [{ url: `/api/opensky?${osQuery}`, kind: 'opensky' as const }] : []),
-        ...(!isGitHubPages ? [{ url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const }] : []),
-        { url: `https://opensky-network.org/api/states/all?${osQuery}`, kind: 'opensky' },
-        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb' },
-        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb' },
-        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb' },
-        { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' },
-        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24' }
+        ...(!isGitHubPages ? [{ url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' }] : []),
+        ...(!isGitHubPages ? [{ url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Proxy)' }] : []),
+        { url: `https://opensky-network.org/api/states/all?${osQuery}`, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
+        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB' },
+        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network' },
+        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network' },
+        { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CorsProxy.io)' },
+        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CodeTabs Proxy)' },
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' }
       ];
 
-      for (const { url, kind } of sources) {
+      setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'ממתין...' })));
+
+      for (const { url, kind, name } of sources) {
+        setCurrentConnectingServer(name);
+        setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'connecting', message: 'שולח בקשה...' } : a));
+
         try {
           // Timeout signal to prevent hanging proxies from blocking the loop
           const timeoutSignal = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined;
@@ -541,6 +549,7 @@ export default function App() {
           const res = await fetch(url, { signal });
           if (!res.ok) {
             console.warn(`[${kind}] ${res.status} ${res.statusText} ← ${url}`);
+            setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'failed', message: `שגיאה ${res.status}` } : a));
             continue;
           }
           let parsed = await res.json();
@@ -561,6 +570,7 @@ export default function App() {
             if (parsed && Array.isArray(parsed.ac) && parsed.ac.length > 0) {
               if (parsed.source === 'live_simulation_fallback' || parsed.source === 'regional_simulation') {
                 liveAircrafts = parsed.ac;
+                setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'failed', message: 'סימולציה מקומית' } : a));
                 continue;
               }
               list = parsed.ac;
@@ -570,23 +580,24 @@ export default function App() {
           }
 
           if (list.length > 0) {
-            let sourceLabel = 'OpenSky Network';
-            if (kind === 'fr24') sourceLabel = 'FlightRadar24';
-            else if (kind === 'readsb') sourceLabel = 'Airplanes.live / ADSB.lol';
-            else if (kind === 'local') sourceLabel = 'שרת Proxy מקומי';
-
-            setActiveSourceKind(sourceLabel);
+            setActiveSourceKind(name);
+            setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'success', message: `${list.length} טיסות התקבלו!` } : a));
+            setCurrentConnectingServer(null);
             console.info(`[${kind}] ✓ ${list.length} aircrafts loaded successfully from ${url}`);
             liveAircrafts = list;
             break;
+          } else {
+            setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'failed', message: 'אין מטוסים ברדיוס' } : a));
           }
         } catch (e: any) {
           if (e.name === 'AbortError' && abortControllerRef.current.signal.aborted) {
             throw e; // Explicit user/component navigation abort
           }
           console.warn(`[${kind}] Fetch failed on ${url}:`, e.message);
+          setConnectionAttempts(prev => prev.map(a => a.name === name ? { ...a, status: 'failed', message: 'שגיאת חיבור' } : a));
         }
       }
+      setCurrentConnectingServer(null);
       
       if (liveAircrafts.length > 0) {
         const validAc = liveAircrafts.filter((ac: Aircraft) => typeof ac.lat === 'number' && typeof ac.lon === 'number');
@@ -857,6 +868,17 @@ export default function App() {
         {/* Right Controls */}
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowServerDetails(!showServerDetails)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+              showServerDetails ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+            }`}
+            title="הצג חיווי שרתים ויומן התחברות"
+          >
+            <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+            <span className="hidden md:inline">חיווי שרתים</span>
+          </button>
+
+          <button
             onClick={() => fetchFlights()}
             disabled={loading}
             className={`flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium border border-slate-700 transition ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -892,6 +914,95 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Live Server Connection Status Bar */}
+      <div className="bg-slate-900/90 border-b border-slate-800 px-4 py-1.5 flex items-center justify-between text-xs text-slate-300 z-20 backdrop-blur-sm">
+        <div className="flex items-center gap-2 overflow-hidden">
+          {currentConnectingServer ? (
+            <div className="flex items-center gap-2 text-cyan-400 font-medium animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>מנסה להתחבר כעת לשרת: <strong className="text-white">{currentConnectingServer}</strong></span>
+            </div>
+          ) : isLiveData ? (
+            <div className="flex items-center gap-2 text-emerald-400 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>מחובר בהצלחה לשרת LIVE: <strong className="text-emerald-200">{activeSourceKind}</strong></span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-amber-400 font-medium">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>שרתי LIVE לא השיבו • מציג מכ"ם סימולציה אזורית</span>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowServerDetails(!showServerDetails)}
+          className="text-cyan-400 hover:text-cyan-300 underline font-mono text-[11px] flex items-center gap-1 shrink-0"
+        >
+          <span>{showServerDetails ? 'הסתר יומן שרתים ▲' : 'הצג יומן שרתים (8 שרתים) ▼'}</span>
+        </button>
+      </div>
+
+      {/* Server Details Drawer */}
+      {showServerDetails && (
+        <div className="bg-slate-900/95 border-b border-slate-800 p-4 text-xs z-30 shadow-2xl backdrop-blur-md animate-fadeIn">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h3 className="font-bold text-slate-100 flex items-center gap-2 text-sm">
+                <Radio className="w-4 h-4 text-cyan-400" />
+                חיווי סטטוס שרתי טיסות (Live ADSB Feed Status)
+              </h3>
+              <button
+                onClick={() => fetchFlights()}
+                className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-medium flex items-center gap-1 transition"
+              >
+                <RefreshCw className="w-3 h-3" />
+                בדוק את כל השרתים מחדש
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {connectionAttempts.map((attempt, idx) => (
+                <div
+                  key={idx}
+                  className={`p-2.5 rounded-lg border flex items-center justify-between gap-2 transition ${
+                    attempt.status === 'success'
+                      ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                      : attempt.status === 'connecting'
+                      ? 'bg-cyan-950/50 border-cyan-500/50 text-cyan-200 animate-pulse'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  <div className="flex flex-col truncate">
+                    <span className="font-semibold text-slate-200 truncate">{attempt.name}</span>
+                    <span className="text-[10px] opacity-75 font-mono">{attempt.message}</span>
+                  </div>
+
+                  <div className="shrink-0">
+                    {attempt.status === 'success' && (
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                        ✓ מחובר
+                      </span>
+                    )}
+                    {attempt.status === 'connecting' && (
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30 flex items-center gap-1">
+                        <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                        בודק...
+                      </span>
+                    )}
+                    {attempt.status === 'failed' && (
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-medium">
+                        ✗ נכשל / ללא נתונים
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Body */}
       <div className="flex flex-1 relative overflow-hidden">
