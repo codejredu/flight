@@ -509,34 +509,22 @@ export default function App() {
       setLoading(prev => aircrafts.length === 0 ? true : prev);
       
       const isGitHubPages = window.location.hostname.includes('github.io');
-      const effectiveDist = Math.max(distanceKm, 200);
-      const pointPath = `v2/point/${center.lat}/${center.lng}/${effectiveDist}`;
-      const latLonPath = `v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`;
+      const effectiveDist = Math.min(Math.max(distanceKm, 200), 250);
 
       // Bounding box size: ±2.5° (~25 square degrees = 1 OpenSky credit)
       const box = 2.5;
       const osQuery = `lamin=${(center.lat - box).toFixed(2)}&lomin=${(center.lng - box).toFixed(2)}&lamax=${(center.lat + box).toFixed(2)}&lomax=${(center.lng + box).toFixed(2)}`;
-      const osDirectUrl = `https://opensky-network.org/api/states/all?${osQuery}`;
-      const fr24RawUrl = `https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${(center.lat + box).toFixed(2)},${(center.lat - box).toFixed(2)},${(center.lng - box).toFixed(2)},${(center.lng + box).toFixed(2)}&faa=1&mlat=1&flarm=1&adsb=1&gnd=1&air=1&vehicles=0&estimated=1&maxage=14400&gliders=1`;
 
       type SourceKind = 'opensky' | 'fr24' | 'readsb' | 'local';
       interface Source { url: string; kind: SourceKind; name: string }
 
       const sources: Source[] = [
-        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB (ישיר)' },
-        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network (ישיר)' },
-        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network (ישיר)' },
+        { url: `https://api.adsb.lol/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'ADSB.lol' },
+        { url: `https://api.airplanes.live/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'Airplanes.live' },
+        { url: `https://api.adsb.fi/v2/lat/${center.lat.toFixed(3)}/lon/${center.lng.toFixed(3)}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi' },
         ...(!isGitHubPages ? [
-          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' },
-          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' }
-        ] : []),
-        { url: osDirectUrl, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
-        { url: `https://corsproxy.io/?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CorsProxy)' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (AllOrigins)' },
-        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CodeTabs)' },
-        { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CorsProxy.io)' },
-        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CodeTabs Proxy)' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' }
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי' }
+        ] : [])
       ];
 
       setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'ממתין לחיבור...' })));
