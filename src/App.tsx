@@ -523,20 +523,20 @@ export default function App() {
       interface Source { url: string; kind: SourceKind; name: string }
 
       const sources: Source[] = [
-        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB' },
-        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network' },
-        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network' },
+        { url: `https://api.airplanes.live/${pointPath}`, kind: 'readsb', name: 'Airplanes.live ADSB (ישיר)' },
+        { url: `https://api.adsb.lol/${latLonPath}`, kind: 'readsb', name: 'ADSB.lol Open Network (ישיר)' },
+        { url: `https://api.adsb.fi/v2/lat/${center.lat}/lon/${center.lng}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi Network (ישיר)' },
         { url: osDirectUrl, kind: 'opensky', name: 'OpenSky Network (ישיר)' },
-        ...(isGitHubPages ? [
-          { url: `https://corsproxy.io/?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky' as const, name: 'OpenSky Network (CorsProxy)' },
-          { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky' as const, name: 'OpenSky Network (AllOrigins)' }
-        ] : [
-          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' },
-          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Proxy)' }
-        ]),
+        { url: `https://corsproxy.io/?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CorsProxy)' },
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (AllOrigins)' },
+        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(osDirectUrl)}`, kind: 'opensky', name: 'OpenSky Network (CodeTabs)' },
         { url: `https://corsproxy.io/?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CorsProxy.io)' },
         { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (CodeTabs Proxy)' },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' }
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(fr24RawUrl)}`, kind: 'fr24', name: 'FlightRadar24 (AllOrigins Proxy)' },
+        ...(!isGitHubPages ? [
+          { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'שרת Proxy מקומי (OpenSky Auth)' },
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' }
+        ] : [])
       ];
 
       setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'שולח בקשה במקביל...' })));
@@ -983,7 +983,7 @@ export default function App() {
           onClick={() => setShowServerDetails(!showServerDetails)}
           className="text-cyan-400 hover:text-cyan-300 underline font-mono text-[11px] flex items-center gap-1 shrink-0"
         >
-          <span>{showServerDetails ? 'הסתר יומן שרתים ▲' : 'הצג יומן שרתים (8 שרתים) ▼'}</span>
+          <span>{showServerDetails ? 'הסתר יומן שרתים ▲' : 'הצג יומן שרתים (11+ שרתים ו-Proxies) ▼'}</span>
         </button>
       </div>
 
