@@ -1,4 +1,4 @@
-import express from 'express';
+ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
@@ -91,37 +91,45 @@ async function startServer() {
       const lomax = req.query.lomax || '37.30';
       const targetUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
 
+      const rawClientId = process.env.OPENSKY_CLIENT_ID || 'codejr-api-client';
+      const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || 'WQXqI6JuCXYGpOqCbeKLWG9PXrvjxNqC';
+      const clientId = rawClientId.trim().replace(/\s+/g, '');
+      const clientSecret = rawClientSecret.trim();
+
       const headers: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlyRadarIsrael/1.0',
         'Accept': 'application/json'
       };
 
-      const rawClientId = process.env.OPENSKY_CLIENT_ID || '';
-      const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || '';
-      const clientId = rawClientId.trim().replace(/\s+/g, '');
-      const clientSecret = rawClientSecret.trim();
-
+      // 1. Try OAuth2 Bearer token
       const token = await getOpenSkyToken();
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       } else if (clientId && clientSecret) {
-        // Fallback to Basic Auth if OAuth token fails
-        const authString = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-        headers.Authorization = `Basic ${authString}`;
+        // 2. Try Basic Auth with clientId
+        headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
       }
 
-      const response = await fetch(targetUrl, { headers });
-      const rateLimit = response.headers.get('x-rate-limit-remaining');
-      if (rateLimit) {
-        res.setHeader('X-Rate-Limit-Remaining', rateLimit);
+      let response = await fetch(targetUrl, { headers });
+
+      // 3. Fallback to Basic Auth with username 'codejr' if 401
+      if (!response.ok && response.status === 401 && clientSecret) {
+        headers.Authorization = `Basic ${Buffer.from(`codejr:${clientSecret}`).toString('base64')}`;
+        response = await fetch(targetUrl, { headers });
       }
 
-      if (!response.ok) {
-        return res.status(response.status).json({ error: `OpenSky status ${response.status}` });
+      // 4. Fallback to anonymous if still 401
+      if (!response.ok && response.status === 401) {
+        delete headers.Authorization;
+        response = await fetch(targetUrl, { headers });
       }
 
-      const data = await response.json();
-      res.json(data);
+      if (response.ok) {
+        const data = await response.json();
+        return res.json(data);
+      }
+
+      return res.status(response.status).json({ error: `OpenSky HTTP ${response.status}` });
     } catch (error: any) {
       res.status(502).json({ error: error.message });
     }
