@@ -1,4 +1,5 @@
- import express from 'express';
+import 'dotenv/config';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
