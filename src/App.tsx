@@ -1,4 +1,4 @@
- /**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -565,6 +565,8 @@ export default function App() {
       interface Source { url: string; kind: SourceKind; name: string }
 
       const sources: Source[] = [
+        // Always try planes.json (built-in feed updated automatically via GitHub Actions or local script)
+        { url: './planes.json?t=' + Date.now(), kind: 'readsb', name: 'עדכון מקומי (GitHub Actions / planes.json)' },
         ...(!isGitHubPages ? [
           { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת ADSB מהיר (Multi-Feed מקומי)' },
           { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'OpenSky Network (עם API Client)' }
