@@ -48,8 +48,8 @@ async function startServer() {
     if (openSkyTokenCache.token && Date.now() < openSkyTokenCache.exp) {
       return openSkyTokenCache.token;
     }
-    const rawClientId = process.env.OPENSKY_CLIENT_ID || '';
-    const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || '';
+    const rawClientId = process.env.OPENSKY_CLIENT_ID || 'codejr-api-client';
+    const rawClientSecret = process.env.OPENSKY_CLIENT_SECRET || 'WQXqI6JuCXYGpOqCbeKLWG9PXrvjxNqC';
     const clientId = rawClientId.trim().replace(/\s+/g, '');
     const clientSecret = rawClientSecret.trim();
     if (!clientId || !clientSecret) return null;
