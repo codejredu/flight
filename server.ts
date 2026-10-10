@@ -1,5 +1,7 @@
-import 'dotenv/config';
+ import 'dotenv/config';
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
@@ -66,6 +68,7 @@ async function startServer() {
             client_id: clientId,
             client_secret: clientSecret,
           }),
+          signal: AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined
         }
       );
       if (!r.ok) return null;
@@ -111,18 +114,23 @@ async function startServer() {
         headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
       }
 
-      let response = await fetch(targetUrl, { headers });
+      const fetchOptions = {
+        headers,
+        signal: AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined
+      };
+
+      let response = await fetch(targetUrl, fetchOptions);
 
       // 3. Fallback to Basic Auth with username 'codejr' if 401
       if (!response.ok && response.status === 401 && clientSecret) {
         headers.Authorization = `Basic ${Buffer.from(`codejr:${clientSecret}`).toString('base64')}`;
-        response = await fetch(targetUrl, { headers });
+        response = await fetch(targetUrl, fetchOptions);
       }
 
       // 4. Fallback to anonymous if still 401
       if (!response.ok && response.status === 401) {
         delete headers.Authorization;
-        response = await fetch(targetUrl, { headers });
+        response = await fetch(targetUrl, fetchOptions);
       }
 
       if (response.ok) {
@@ -231,13 +239,21 @@ async function startServer() {
     }
   });
 
-  // Create Vite server in middleware mode
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa',
-  });
-
-  app.use(vite.middlewares);
+  const distPath = path.resolve('dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
+    // Create Vite server in middleware mode
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  }
 
   app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
