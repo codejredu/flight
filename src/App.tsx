@@ -298,11 +298,45 @@ const parseOpenSkyData = (states: any[]): Aircraft[] => {
 const LeafletViewController = ({ center, zoom, isProgrammaticMoveRef }: { center: { lat: number; lng: number }; zoom: number; isProgrammaticMoveRef: React.MutableRefObject<boolean> }) => {
   const map = useMap();
   useEffect(() => {
-    if (map && isProgrammaticMoveRef.current) {
+    if (!map) return;
+    if (isProgrammaticMoveRef.current) {
       isProgrammaticMoveRef.current = false;
-      map.flyTo([center.lat, center.lng], zoom, { duration: 1.2 });
+      if (
+        center &&
+        typeof center.lat === 'number' && !isNaN(center.lat) && isFinite(center.lat) &&
+        typeof center.lng === 'number' && !isNaN(center.lng) && isFinite(center.lng)
+      ) {
+        try {
+          const mapSize = map.getSize();
+          if (!mapSize || mapSize.x <= 0 || mapSize.y <= 0) {
+            map.invalidateSize();
+            return;
+          }
+          const safeZoom = typeof zoom === 'number' && !isNaN(zoom) && isFinite(zoom) ? zoom : (map.getZoom() || 8);
+          map.flyTo([center.lat, center.lng], safeZoom, { duration: 1.2 });
+        } catch (e) {
+          console.warn("Leaflet flyTo fallback:", e);
+          try {
+            map.setView([center.lat, center.lng], typeof zoom === 'number' && !isNaN(zoom) ? zoom : 8);
+          } catch (_) {}
+        }
+      }
     }
-  }, [center.lat, center.lng, zoom, map, isProgrammaticMoveRef]);
+  }, [center?.lat, center?.lng, zoom, map, isProgrammaticMoveRef]);
+  return null;
+};
+
+const LeafletResizeHandler = ({ isSidebarOpen }: { isSidebarOpen: boolean }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    const timer = setTimeout(() => {
+      try {
+        map.invalidateSize();
+      } catch (_) {}
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [map, isSidebarOpen]);
   return null;
 };
 
@@ -313,8 +347,20 @@ const LeafletEventsHandler = ({ onCenterChange, isProgrammaticMoveRef }: { onCen
     },
     moveend: () => {
       if (!isProgrammaticMoveRef.current) {
-        const c = map.getCenter();
-        onCenterChange({ lat: c.lat, lng: c.lng }, map.getZoom());
+        try {
+          const c = map.getCenter();
+          const z = map.getZoom();
+          if (
+            c &&
+            typeof c.lat === 'number' && !isNaN(c.lat) && isFinite(c.lat) &&
+            typeof c.lng === 'number' && !isNaN(c.lng) && isFinite(c.lng) &&
+            typeof z === 'number' && !isNaN(z) && isFinite(z)
+          ) {
+            onCenterChange({ lat: c.lat, lng: c.lng }, z);
+          }
+        } catch (e) {
+          console.error("Leaflet getCenter error:", e);
+        }
       }
     }
   });
@@ -487,7 +533,7 @@ export default function App() {
   // Refs for debouncing map drag, aborting pending fetches, and tracking programmatic moves
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const isProgrammaticMoveRef = useRef<boolean>(true);
+  const isProgrammaticMoveRef = useRef<boolean>(false);
 
   // Listen for GMP quota exceeded event
   useEffect(() => {
@@ -520,14 +566,12 @@ export default function App() {
 
       const sources: Source[] = [
         ...(!isGitHubPages ? [
+          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת ADSB מהיר (Multi-Feed מקומי)' },
           { url: `/api/opensky?${osQuery}`, kind: 'opensky' as const, name: 'OpenSky Network (עם API Client)' }
         ] : []),
         { url: `https://api.adsb.lol/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'ADSB.lol' },
         { url: `https://api.airplanes.live/v2/point/${center.lat.toFixed(3)}/${center.lng.toFixed(3)}/${effectiveDist}`, kind: 'readsb', name: 'Airplanes.live' },
-        { url: `https://api.adsb.fi/v2/lat/${center.lat.toFixed(3)}/lon/${center.lng.toFixed(3)}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi' },
-        ...(!isGitHubPages ? [
-          { url: `/api/flights?lat=${center.lat}&lon=${center.lng}&dist=${effectiveDist}`, kind: 'local' as const, name: 'שרת Proxy מקומי (ADSB Multi-Feed)' }
-        ] : [])
+        { url: `https://api.adsb.fi/v2/lat/${center.lat.toFixed(3)}/lon/${center.lng.toFixed(3)}/dist/${effectiveDist}`, kind: 'readsb', name: 'ADSB.fi' }
       ];
 
       setConnectionAttempts(sources.map(s => ({ name: s.name, kind: s.kind, status: 'connecting', message: 'ממתין לחיבור...' })));
@@ -709,12 +753,14 @@ export default function App() {
       setAircrafts(prev => {
         if (!prev || prev.length === 0) return getMockAircrafts(center.lat, center.lng);
         return prev.map(ac => {
-          if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return ac;
-          const speed = ac.gs || 250;
-          const headingRad = ((ac.track || 0) * Math.PI) / 180;
+          if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number' || isNaN(ac.lat) || isNaN(ac.lon) || !isFinite(ac.lat) || !isFinite(ac.lon)) return ac;
+          const speed = (typeof ac.gs === 'number' && !isNaN(ac.gs) && isFinite(ac.gs)) ? ac.gs : 250;
+          const trackDeg = (typeof ac.track === 'number' && !isNaN(ac.track) && isFinite(ac.track)) ? ac.track : 0;
+          const headingRad = (trackDeg * Math.PI) / 180;
           const distDegrees = (speed / 3600) * 0.003;
           const newLat = ac.lat + Math.cos(headingRad) * distDegrees;
           const newLon = ac.lon + Math.sin(headingRad) * distDegrees;
+          if (isNaN(newLat) || isNaN(newLon) || !isFinite(newLat) || !isFinite(newLon)) return ac;
           return {
             ...ac,
             lat: newLat,
@@ -759,19 +805,21 @@ export default function App() {
   };
 
   // Fallback mock aircraft generator for resilience
-  function getMockAircrafts(lat: number, lon: number): Aircraft[] {
+  function getMockAircrafts(lat?: number, lon?: number): Aircraft[] {
+    const safeLat = (typeof lat === 'number' && !isNaN(lat) && isFinite(lat)) ? lat : 32.0055;
+    const safeLon = (typeof lon === 'number' && !isNaN(lon) && isFinite(lon)) ? lon : 34.8854;
     return [
-      { hex: '740abc', flight: 'LY315', r: '4X-EED', t: 'B789', alt_baro: 36000, gs: 482, track: 285, lat: lat + 0.2, lon: lon - 0.3, squawk: '1000' },
-      { hex: '740def', flight: 'ELAL1', r: '4X-EKC', t: 'B748', alt_baro: 12400, gs: 310, track: 140, lat: lat - 0.3, lon: lon + 0.2, squawk: '2000' },
-      { hex: '43c123', flight: 'BAH123', r: 'G-XLEF', t: 'A359', alt_baro: 39000, gs: 512, track: 45, lat: lat + 0.5, lon: lon + 0.4, squawk: '7700', emergency: 'general' },
-      { hex: 'abc456', flight: 'RYR432', r: 'SP-RKA', t: 'B738', alt_baro: 8200, gs: 260, track: 190, lat: lat - 0.4, lon: lon - 0.4, squawk: '1200' },
-      { hex: '738910', flight: 'ISR902', r: '4X-ABX', t: 'AT76', alt_baro: 6500, gs: 210, track: 320, lat: lat + 0.1, lon: lon + 0.1, squawk: '7000' },
-      { hex: '750111', flight: 'THY812', r: 'TC-JNC', t: 'A321', alt_baro: 28000, gs: 450, track: 210, lat: lat + 0.6, lon: lon - 0.5, squawk: '1000' },
-      { hex: '760222', flight: 'UAE931', r: 'A6-EPL', t: 'A388', alt_baro: 41000, gs: 540, track: 290, lat: lat - 0.5, lon: lon + 0.6, squawk: '1000' },
-      { hex: '770333', flight: 'IAF201', r: '4X-123', t: 'C130', alt_baro: 18500, gs: 315, track: 90, lat: lat + 0.15, lon: lon + 0.25, squawk: '7000' },
-      { hex: '780444', flight: 'HEL01', r: '4X-H11', t: 'H64', alt_baro: 2500, gs: 120, track: 110, lat: lat - 0.2, lon: lon - 0.6, squawk: '1000' },
-      { hex: '790555', flight: 'GLID1', r: '4X-G01', t: 'GLID', alt_baro: 4000, gs: 80, track: 60, lat: lat - 0.1, lon: lon - 0.2, squawk: '1000' },
-      { hex: '790666', flight: 'CESSNA1', r: '4X-C55', t: 'C172', alt_baro: 3500, gs: 110, track: 150, lat: lat + 0.3, lon: lon - 0.1, squawk: '1000' }
+      { hex: '740abc', flight: 'LY315', r: '4X-EED', t: 'B789', alt_baro: 36000, gs: 482, track: 285, lat: safeLat + 0.2, lon: safeLon - 0.3, squawk: '1000' },
+      { hex: '740def', flight: 'ELAL1', r: '4X-EKC', t: 'B748', alt_baro: 12400, gs: 310, track: 140, lat: safeLat - 0.3, lon: safeLon + 0.2, squawk: '2000' },
+      { hex: '43c123', flight: 'BAH123', r: 'G-XLEF', t: 'A359', alt_baro: 39000, gs: 512, track: 45, lat: safeLat + 0.5, lon: safeLon + 0.4, squawk: '7700', emergency: 'general' },
+      { hex: 'abc456', flight: 'RYR432', r: 'SP-RKA', t: 'B738', alt_baro: 8200, gs: 260, track: 190, lat: safeLat - 0.4, lon: safeLon - 0.4, squawk: '1200' },
+      { hex: '738910', flight: 'ISR902', r: '4X-ABX', t: 'AT76', alt_baro: 6500, gs: 210, track: 320, lat: safeLat + 0.1, lon: safeLon + 0.1, squawk: '7000' },
+      { hex: '750111', flight: 'THY812', r: 'TC-JNC', t: 'A321', alt_baro: 28000, gs: 450, track: 210, lat: safeLat + 0.6, lon: safeLon - 0.5, squawk: '1000' },
+      { hex: '760222', flight: 'UAE931', r: 'A6-EPL', t: 'A388', alt_baro: 41000, gs: 540, track: 290, lat: safeLat - 0.5, lon: safeLon + 0.6, squawk: '1000' },
+      { hex: '770333', flight: 'IAF201', r: '4X-123', t: 'C130', alt_baro: 18500, gs: 315, track: 90, lat: safeLat + 0.15, lon: safeLon + 0.25, squawk: '7000' },
+      { hex: '780444', flight: 'HEL01', r: '4X-H11', t: 'H64', alt_baro: 2500, gs: 120, track: 110, lat: safeLat - 0.2, lon: safeLon - 0.6, squawk: '1000' },
+      { hex: '790555', flight: 'GLID1', r: '4X-G01', t: 'GLID', alt_baro: 4000, gs: 80, track: 60, lat: safeLat - 0.1, lon: safeLon - 0.2, squawk: '1000' },
+      { hex: '790666', flight: 'CESSNA1', r: '4X-C55', t: 'C172', alt_baro: 3500, gs: 110, track: 150, lat: safeLat + 0.3, lon: safeLon - 0.1, squawk: '1000' }
     ];
   }
 
@@ -805,10 +853,16 @@ export default function App() {
   // Handle selecting a preset location
   const handlePresetChange = (preset: typeof PRESET_LOCATIONS[0]) => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    isProgrammaticMoveRef.current = true;
-    setSelectedPreset(preset);
-    setCenter({ lat: preset.lat, lng: preset.lon });
-    setDistanceKm(preset.dist);
+    if (
+      preset &&
+      typeof preset.lat === 'number' && !isNaN(preset.lat) && isFinite(preset.lat) &&
+      typeof preset.lon === 'number' && !isNaN(preset.lon) && isFinite(preset.lon)
+    ) {
+      isProgrammaticMoveRef.current = true;
+      setSelectedPreset(preset);
+      setCenter({ lat: preset.lat, lng: preset.lon });
+      setDistanceKm(preset.dist);
+    }
   };
 
   // Dark map custom styles for FlightRadar24 dark mode aesthetic
@@ -1162,7 +1216,10 @@ export default function App() {
                         onClick={() => {
                           setSelectedFlight(ac);
                           setIsSidebarOpen(true);
-                          if (ac.lat && ac.lon) {
+                          if (
+                            typeof ac.lat === 'number' && !isNaN(ac.lat) && isFinite(ac.lat) &&
+                            typeof ac.lon === 'number' && !isNaN(ac.lon) && isFinite(ac.lon)
+                          ) {
                             isProgrammaticMoveRef.current = true;
                             setCenter({ lat: ac.lat, lng: ac.lon });
                           }
@@ -1252,21 +1309,33 @@ export default function App() {
         {/* Center: OpenStreetMap / Leaflet Map */}
         <main className="flex-1 relative h-full">
           <MapContainer
-            center={[center.lat, center.lng]}
-            zoom={zoom}
+            center={[
+              typeof center?.lat === 'number' && !isNaN(center.lat) && isFinite(center.lat) ? center.lat : 32.0055,
+              typeof center?.lng === 'number' && !isNaN(center.lng) && isFinite(center.lng) ? center.lng : 34.8854
+            ]}
+            zoom={typeof zoom === 'number' && !isNaN(zoom) && isFinite(zoom) ? zoom : 8}
             zoomControl={true}
             className="w-full h-full z-0"
             style={{ background: '#090d16' }}
           >
             <LeafletViewController center={center} zoom={zoom} isProgrammaticMoveRef={isProgrammaticMoveRef} />
+            <LeafletResizeHandler isSidebarOpen={isSidebarOpen} />
             <LeafletEventsHandler
               isProgrammaticMoveRef={isProgrammaticMoveRef}
               onCenterChange={(newCenter, newZoom) => {
-                setZoom(newZoom);
-                if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-                debounceTimerRef.current = setTimeout(() => {
-                  setCenter(newCenter);
-                }, 600);
+                if (typeof newZoom === 'number' && !isNaN(newZoom) && isFinite(newZoom)) {
+                  setZoom(newZoom);
+                }
+                if (
+                  newCenter &&
+                  typeof newCenter.lat === 'number' && !isNaN(newCenter.lat) && isFinite(newCenter.lat) &&
+                  typeof newCenter.lng === 'number' && !isNaN(newCenter.lng) && isFinite(newCenter.lng)
+                ) {
+                  if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+                  debounceTimerRef.current = setTimeout(() => {
+                    setCenter(newCenter);
+                  }, 600);
+                }
               }}
             />
             <TileLayer
@@ -1283,7 +1352,10 @@ export default function App() {
               maxZoom={19}
             />
             {filteredAircrafts.map((ac) => {
-              if (!ac.lat || !ac.lon) return null;
+              if (
+                typeof ac.lat !== 'number' || isNaN(ac.lat) || !isFinite(ac.lat) ||
+                typeof ac.lon !== 'number' || isNaN(ac.lon) || !isFinite(ac.lon)
+              ) return null;
               const isSelected = selectedFlight?.hex === ac.hex;
               const customIcon = createAircraftDivIcon(ac, isSelected, showLabels);
 
